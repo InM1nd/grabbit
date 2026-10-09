@@ -1,0 +1,74 @@
+import type { ExpoConfig } from 'expo/config';
+
+// Personal app: the Gemini key is read from the build machine's env and baked into the bundle.
+const geminiApiKey = (process.env.GEMINI_API_KEY || '').trim();
+
+const config: ExpoConfig = {
+  name: 'Полка',
+  slug: 'polka',
+  scheme: 'polka',
+  version: '1.0.0',
+  orientation: 'portrait',
+  icon: './assets/icon.png',
+  userInterfaceStyle: 'light',
+  backgroundColor: '#FAF7F5',
+  android: {
+    package: 'com.zabolotny.polka',
+    versionCode: 1,
+    adaptiveIcon: {
+      backgroundColor: '#EE5A5F',
+      foregroundImage: './assets/android-icon-foreground.png',
+      backgroundImage: './assets/android-icon-background.png',
+      monochromeImage: './assets/android-icon-monochrome.png',
+    },
+    permissions: ['android.permission.POST_NOTIFICATIONS', 'android.permission.ACCESS_NETWORK_STATE'],
+    blockedPermissions: [
+      'android.permission.RECORD_AUDIO',
+      'android.permission.SYSTEM_ALERT_WINDOW',
+      'android.permission.READ_EXTERNAL_STORAGE',
+      'android.permission.WRITE_EXTERNAL_STORAGE',
+      'com.google.android.c2dm.permission.RECEIVE',
+      'com.google.android.finsky.permission.BIND_GET_INSTALL_REFERRER_SERVICE',
+      'com.sec.android.provider.badge.permission.READ',
+      'com.sec.android.provider.badge.permission.WRITE',
+      'com.htc.launcher.permission.READ_SETTINGS',
+      'com.htc.launcher.permission.UPDATE_SHORTCUT',
+      'com.sonyericsson.home.permission.BROADCAST_BADGE',
+      'com.sonymobile.home.permission.PROVIDER_INSERT_BADGE',
+      'com.anddoes.launcher.permission.UPDATE_COUNT',
+      'com.majeur.launcher.permission.UPDATE_BADGE',
+      'com.huawei.android.launcher.permission.CHANGE_BADGE',
+      'com.huawei.android.launcher.permission.READ_SETTINGS',
+      'com.huawei.android.launcher.permission.WRITE_SETTINGS',
+      'android.permission.READ_APP_BADGE',
+      'com.oppo.launcher.permission.READ_SETTINGS',
+      'com.oppo.launcher.permission.WRITE_SETTINGS',
+      'me.everything.badger.permission.BADGE_COUNT_READ',
+      'me.everything.badger.permission.BADGE_COUNT_WRITE',
+    ],
+    predictiveBackGestureEnabled: false,
+    softwareKeyboardLayoutMode: 'resize',
+  },
+  plugins: [
+    [
+      'expo-share-intent',
+      {
+        androidIntentFilters: ['text/*'],
+        disableIOS: true,
+      },
+    ],
+    'expo-sqlite',
+    'expo-image',
+    [
+      'expo-splash-screen',
+      { image: './assets/splash-icon.png', imageWidth: 140, resizeMode: 'contain', backgroundColor: '#FAF7F5' },
+    ],
+    [
+      'expo-notifications',
+      { icon: './assets/notification-icon.png', color: '#E8465B', defaultChannel: 'reminders' },
+    ],
+  ],
+  extra: { geminiApiKey },
+};
+
+export default config;
