@@ -54,6 +54,8 @@ export function normalizeUrl(url: string): string {
       if (k === 't' && /youtu/.test(u.hostname)) continue; // keep yt timestamp
       if (drop.some((r) => r.test(k))) u.searchParams.delete(k);
     }
+    // These platforms never need query params to identify a post (Instagram adds dlrf/igsh/_r...).
+    if (/(^|\.)(instagram\.com|tiktok\.com|threads\.net|threads\.com)$/.test(u.hostname)) u.search = '';
     u.hash = '';
     let s = u.toString();
     if (s.endsWith('?')) s = s.slice(0, -1);

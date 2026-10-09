@@ -1,7 +1,7 @@
 import NetInfo from '@react-native-community/netinfo';
 import Constants from 'expo-constants';
 import { Directory, File, Paths } from 'expo-file-system';
-import { analyzePost, AiError } from './core/ai';
+import { analyzePost, AiError, isWeakText, sniffMime } from './core/ai';
 import { fetchMetadata } from './core/metadata';
 import type { Metadata } from './core/types';
 import { detectPlatform, extraText, extractUrl, normalizeUrl } from './core/url';
@@ -68,10 +68,11 @@ export function processQueue(onlyId?: number): Promise<void> {
   return running;
 }
 
-async function processOne(p: db.Post) {
+async function processOne(post: db.Post) {
+  let p = post;
   let meta: Metadata = {
     url: p.url, platform: p.platform, title: p.title ?? undefined, description: p.description ?? undefined,
-    author: p.author ?? undefined, image: p.image ?? undefined, blocked: p.metaBlocked, source: 'db',
+    author: p.author ?? undefined, image: p.image ?? undefined, blocked: p.metaBlocked, unavailable: p.unavailable, source: 'db',
   };
   if (!p.metaFetched) {
     const m = await fetchMetadata(p.url);
@@ -84,9 +85,10 @@ async function processOne(p: db.Post) {
     meta = { ...m, url: p.url };
     const fields: Record<string, any> = {
       title: m.title ?? null, description: m.description ?? null, author: m.author ?? null, image: m.image ?? null,
-      meta_fetched: 1, meta_blocked: m.blocked ? 1 : 0,
+      meta_fetched: 1, meta_blocked: m.blocked ? 1 : 0, unavailable: m.unavailable ? 1 : 0,
     };
     if (m.image) fields.local_image = await cacheThumb(p.id, m.image);
+    p = { ...p, localImage: fields.local_image ?? p.localImage };
     await db.updatePost(p.id, fields);
   }
   if (!API_KEY) {
@@ -95,7 +97,14 @@ async function processOne(p: db.Post) {
   }
   try {
     const boards = await db.boardNames();
-    const ai = await analyzePost({ meta, sharedText: p.rawText ?? undefined, boards }, API_KEY);
+    const sharedText = p.rawText ?? undefined;
+    const note = p.note ?? undefined;
+    // Weak caption (emoji/hashtags only) → let Gemini look at the cached preview image.
+    let image: { mimeType: string; data: string } | undefined;
+    if (p.localImage && isWeakText(meta, sharedText, note)) {
+      try { const data = await new File(p.localImage).base64(); image = { mimeType: sniffMime(data), data }; } catch {}
+    }
+    const ai = await analyzePost({ meta, sharedText, boards, image, note }, API_KEY);
     const boardId = await db.getOrCreateBoard(ai.board, ai.boardEmoji);
     const cur = await db.getPost(p.id);
     if (!cur) return; // deleted meanwhile

@@ -13,6 +13,26 @@ export interface AiInput {
   meta: Metadata;
   sharedText?: string;
   boards: string[]; // existing board names
+  /** Preview image (base64) — sent when the caption is weak so Gemini can "look" at the post. */
+  image?: { mimeType: string; data: string };
+  /** Free-text note the user typed about the post. */
+  note?: string;
+}
+
+/** Guess image mime type from base64 magic bytes. */
+export function sniffMime(b64: string): string {
+  if (b64.startsWith('iVBOR')) return 'image/png';
+  if (b64.startsWith('UklGR')) return 'image/webp';
+  if (b64.startsWith('R0lG')) return 'image/gif';
+  return 'image/jpeg';
+}
+
+/** Caption too thin to understand the post (emoji, hashtags only, "Instagram reel" etc.). */
+export function isWeakText(meta: Metadata, sharedText?: string, note?: string): boolean {
+  const txt = [meta.description, sharedText, note].filter(Boolean).join(' ')
+    .replace(/#[\p{L}\p{N}_]+/gu, '').replace(/@[\w.]+/g, '').replace(/https?:\/\/\S+/g, '')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+  return txt.split(' ').filter((w) => w.length > 2).length < 8;
 }
 
 const SCHEMA = {
@@ -27,7 +47,7 @@ const SCHEMA = {
   required: ['title', 'summary', 'tags', 'board'],
 };
 
-export function buildPrompt({ meta, sharedText, boards }: AiInput): string {
+export function buildPrompt({ meta, sharedText, boards, image, note }: AiInput): string {
   const lines = [
     'Ты помогаешь вести личный органайзер сохранённых постов из соцсетей (как Pinterest).',
     'Пользователь в основном сохраняет посты про технологии: ИИ-инструменты, программирование, гаджеты, дизайн, стартапы, но может быть что угодно.',
@@ -48,7 +68,10 @@ export function buildPrompt({ meta, sharedText, boards }: AiInput): string {
   if (meta.title) lines.push(`Заголовок: ${meta.title}`);
   if (meta.description) lines.push(`Текст/описание: ${meta.description.slice(0, 3000)}`);
   if (sharedText) lines.push(`Текст, который пришёл вместе со ссылкой: ${sharedText.slice(0, 1500)}`);
-  if (meta.blocked && !sharedText) lines.push('(Сайт не отдал метаданные — опирайся на ссылку и платформу.)');
+  if (note) lines.push(`Заметка пользователя о посте (главный источник): ${note.slice(0, 1000)}`);
+  if (image) lines.push('Приложено превью поста (кадр/обложка). Внимательно рассмотри его: текст на картинке, интерфейсы, предметы, людей — и опиши, о чём пост, по тому, что видно. Не выдумывай то, чего не видно.');
+  if (meta.unavailable && !note && !image) lines.push('(Платформа сообщает, что пост недоступен без входа: приватный аккаунт, ограничение по возрасту или пост удалён. Честно напиши это в summary и предложи добавить заметку или скриншот.)');
+  else if (meta.blocked && !sharedText && !note && !image) lines.push('(Сайт не отдал метаданные — опирайся на ссылку и платформу.)');
   return lines.join('\n');
 }
 
@@ -62,7 +85,10 @@ export async function analyzePost(input: AiInput, apiKey: string, timeoutMs = 20
   if (!apiKey) throw new AiError('Нет ключа Gemini', false);
   const prompt = buildPrompt(input);
   const bodyFor = (model: string) => JSON.stringify({
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    contents: [{ role: 'user', parts: [
+      { text: prompt },
+      ...(input.image ? [{ inlineData: { mimeType: input.image.mimeType, data: input.image.data } }] : []),
+    ] }],
     generationConfig: {
       responseMimeType: 'application/json', responseSchema: SCHEMA, temperature: 0.4,
       ...(model.includes('lite') ? {} : { thinkingConfig: { thinkingLevel: 'low' } }),
@@ -94,7 +120,7 @@ export async function analyzePost(input: AiInput, apiKey: string, timeoutMs = 20
         ? [...new Set<string>(parsed.tags.map((t: any) => String(t).toLowerCase().replace(/^#/, '').trim()).filter(Boolean))].slice(0, 6)
         : [];
       // Opaque links (IG/TikTok/X ids) with no metadata: don't let the model guess a topic board.
-      const opaque = input.meta.blocked && !input.sharedText && ['instagram', 'tiktok', 'x', 'threads', 'facebook'].includes(input.meta.platform);
+      const opaque = input.meta.blocked && !input.sharedText && !input.note && !input.image && ['instagram', 'tiktok', 'x', 'threads', 'facebook'].includes(input.meta.platform);
       if (opaque) { parsed.board = 'Разное'; parsed.boardEmoji = '🗂️'; }
       return {
         title: parsed.title ? String(parsed.title).trim().slice(0, 90) : undefined,

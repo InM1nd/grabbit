@@ -16,6 +16,8 @@ export interface Post {
   localImage: string | null;  // cached copy (IG/TikTok CDN links expire)
   metaFetched: boolean;
   metaBlocked: boolean;
+  unavailable: boolean;
+  note: string | null;
   aiTitle: string | null;
   summary: string | null;
   tags: string[];
@@ -74,6 +76,10 @@ export function getDb(): Promise<SQLite.SQLiteDatabase> {
         CREATE INDEX IF NOT EXISTS idx_posts_board ON posts(board_id);
         CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
       `);
+      // v2 columns (user note, "post is not public" flag)
+      const cols = (await db.getAllAsync<{ name: string }>('PRAGMA table_info(posts)')).map((c) => c.name);
+      if (!cols.includes('note')) await db.execAsync('ALTER TABLE posts ADD COLUMN note TEXT');
+      if (!cols.includes('unavailable')) await db.execAsync('ALTER TABLE posts ADD COLUMN unavailable INTEGER NOT NULL DEFAULT 0');
       await db.execAsync('PRAGMA foreign_keys = ON;');
       return db;
     })();
@@ -87,7 +93,7 @@ function rowToPost(r: any): Post {
   return {
     id: r.id, url: r.url, rawText: r.raw_text, platform: r.platform,
     title: r.title, description: r.description, author: r.author, image: r.image, localImage: r.local_image,
-    metaFetched: !!r.meta_fetched, metaBlocked: !!r.meta_blocked,
+    metaFetched: !!r.meta_fetched, metaBlocked: !!r.meta_blocked, unavailable: !!r.unavailable, note: r.note ?? null,
     aiTitle: r.ai_title, summary: r.summary, tags, boardId: r.board_id,
     status: r.status, attempts: r.attempts, nextTryAt: r.next_try_at, lastError: r.last_error,
     createdAt: r.created_at, openedAt: r.opened_at, remindedAt: r.reminded_at,
@@ -132,7 +138,7 @@ export async function listPosts(opts: { boardId?: number | null; query?: string 
     // SQLite LOWER() only folds ASCII, so filter in JS to handle Cyrillic properly.
     const terms = q.split(/\s+/).filter(Boolean);
     posts = posts.filter(({ post, board }) => {
-      const hay = [post.aiTitle, post.title, post.summary, post.description, post.author, board, post.url, ...post.tags.map((t) => '#' + t)]
+      const hay = [post.aiTitle, post.title, post.summary, post.note, post.description, post.author, board, post.url, ...post.tags.map((t) => '#' + t)]
         .filter(Boolean).join(' \n ').toLowerCase();
       return terms.every((t) => hay.includes(t.replace(/^#/, '')));
     });

@@ -11,6 +11,7 @@ export interface Metadata {
   image?: string;
   siteName?: string;
   blocked?: boolean;    // true when the site did not return usable metadata
+  unavailable?: boolean; // the platform says the post is not public (private account / removed / login-only)
   source: string;       // which strategy produced it (debug)
 }
 

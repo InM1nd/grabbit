@@ -78,20 +78,49 @@ async function fetchHtmlMeta(url: string, ua: string): Promise<{ meta: Record<st
     const ct = r.headers.get('content-type') || '';
     if (ct && !/html|xml/i.test(ct)) return null;
     const html = await r.text();
-    return { meta: parseHtmlMeta(html), finalUrl: r.url || url };
+    const meta = parseHtmlMeta(html);
+    const ld = parseJsonLd(html);
+    // expose JSON-LD as fallback keys so fromOg() can use them
+    if (ld.title) meta['ld:title'] = ld.title;
+    if (ld.description) meta['ld:description'] = ld.description;
+    if (ld.image) meta['ld:image'] = ld.image;
+    if (ld.author) meta['ld:author'] = ld.author;
+    return { meta, finalUrl: r.url || url };
   } catch {
     return null;
   }
 }
 
+/** schema.org JSON-LD (articles, videos, products) — some sites have no OG tags but do have this. */
+export function parseJsonLd(html: string): Partial<Metadata> {
+  const out: Partial<Metadata> = {};
+  const re = /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html))) {
+    let data: any;
+    try { data = JSON.parse(m[1].trim()); } catch { continue; }
+    const nodes: any[] = Array.isArray(data) ? data : data['@graph'] ? data['@graph'] : [data];
+    for (const n of nodes) {
+      if (!n || typeof n !== 'object') continue;
+      const img = typeof n.image === 'string' ? n.image : Array.isArray(n.image) ? (typeof n.image[0] === 'string' ? n.image[0] : n.image[0]?.url) : n.image?.url || n.thumbnailUrl?.[0] || n.thumbnailUrl;
+      out.title = out.title || clean(n.headline || n.name, 300);
+      out.description = out.description || clean(n.description || n.articleBody?.slice?.(0, 1500) || n.caption);
+      out.image = out.image || (typeof img === 'string' ? img : undefined);
+      const a = Array.isArray(n.author) ? n.author[0] : n.author;
+      out.author = out.author || clean(typeof a === 'string' ? a : a?.name, 120);
+    }
+  }
+  return out;
+}
+
 function fromOg(meta: Record<string, string>, base: string): Partial<Metadata> {
   const g = (...k: string[]) => k.map((x) => meta[x]).find((v) => v && v.trim());
   return {
-    title: clean(g('og:title', 'twitter:title', '<title>'), 300),
-    description: clean(g('og:description', 'twitter:description', 'description')),
-    image: absolutize(g('og:image', 'og:image:url', 'og:image:secure_url', 'twitter:image', 'twitter:image:src', 'thumbnailurl'), base),
+    title: clean(g('og:title', 'twitter:title', 'ld:title', '<title>'), 300),
+    description: clean(g('og:description', 'twitter:description', 'ld:description', 'description')),
+    image: absolutize(g('og:image', 'og:image:url', 'og:image:secure_url', 'twitter:image', 'twitter:image:src', 'ld:image', 'thumbnailurl'), base),
     siteName: clean(g('og:site_name', 'application-name'), 80),
-    author: clean(g('author', 'article:author', 'twitter:creator'), 120),
+    author: clean(g('author', 'article:author', 'ld:author', 'twitter:creator'), 120),
   };
 }
 
@@ -196,6 +225,7 @@ async function instagram(url: string): Promise<Partial<Metadata> | null> {
       const r = await fetchWithTimeout(embed, { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept-Language': 'ru,en;q=0.8' } });
       if (r.ok) {
         const html = await r.text();
+        if (/EmbedBrokenMedia/.test(html)) res.unavailable = true;
         const cap = /<div class="Caption">([\s\S]*?)<div class="Footer"/.exec(html) || /<div class="Caption">([\s\S]*?)<\/div>/.exec(html);
         if (cap) {
           const user = /class="CaptionUsername"[^>]*>([^<]+)</.exec(cap[1]);
@@ -222,7 +252,8 @@ async function instagram(url: string): Promise<Partial<Metadata> | null> {
     }
   }
   if (!res.title && res.author) res.title = `${res.author} · Instagram`;
-  return useful(res) ? res : null;
+  if (useful(res)) { delete res.unavailable; return res; }
+  return res.unavailable ? { unavailable: true } : null;
 }
 
 async function generic(url: string): Promise<Partial<Metadata> | null> {
@@ -250,9 +281,11 @@ export async function fetchMetadata(url: string): Promise<Metadata> {
   const s = STRATEGIES[platform];
   if (s) tries.push([platform, s]);
   tries.push(['og', generic]); // generic OpenGraph as last resort
+  let unavailable = false;
   for (const [name, fn] of tries) {
     try {
       const r = await fn(url);
+      if (r?.unavailable) unavailable = true;
       if (r && useful(r)) {
         return { platform, source: name, ...r, url: r.url || url };
       }
@@ -260,5 +293,5 @@ export async function fetchMetadata(url: string): Promise<Metadata> {
       // try the next strategy
     }
   }
-  return { url, platform, blocked: true, source: 'none' };
+  return { url, platform, blocked: true, unavailable: unavailable || undefined, source: 'none' };
 }

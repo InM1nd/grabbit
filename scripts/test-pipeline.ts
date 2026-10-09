@@ -1,6 +1,6 @@
 // Usage: GEMINI_API_KEY=... npx tsx scripts/test-pipeline.ts [--no-ai] [urls...]
 import { fetchMetadata } from '../src/core/metadata';
-import { analyzePost } from '../src/core/ai';
+import { analyzePost, isWeakText, sniffMime } from '../src/core/ai';
 import { extractUrl, extraText, normalizeUrl } from '../src/core/url';
 
 const DEFAULT = [
@@ -17,7 +17,12 @@ const DEFAULT = [
 
 const args = process.argv.slice(2);
 const noAi = args.includes('--no-ai');
+const forceVision = args.includes('--vision');
+const noteArg = args.find((a: string) => a.startsWith('--note='))?.slice(7);
 const inputs = args.filter((a: string) => !a.startsWith('--'));
+async function fetchImage(url: string) {
+  try { const r = await fetch(url); if (!r.ok) return undefined; const u8 = new Uint8Array(await r.arrayBuffer()); let bin = ''; for (let i = 0; i < u8.length; i += 0x8000) bin += String.fromCharCode(...u8.subarray(i, i + 0x8000)); const data = btoa(bin); return { mimeType: sniffMime(data), data }; } catch { return undefined; }
+}
 const key = (process.env.GEMINI_API_KEY || '').trim();
 const boards: string[] = [];
 
@@ -34,8 +39,13 @@ const boards: string[] = [];
     console.log('  desc :', meta.description?.slice(0, 140));
     console.log('  image:', meta.image ? meta.image.slice(0, 90) + '…' : '-');
     if (noAi) continue;
+    if (meta.unavailable) console.log('  UNAVAILABLE: platform says post is not public');
     try {
-      const ai = await analyzePost({ meta, sharedText: extraText(raw, url), boards }, key);
+      const sharedText = extraText(raw, url);
+      const weak = isWeakText(meta, sharedText, noteArg);
+      const image = meta.image && (weak || forceVision) ? await fetchImage(meta.image) : undefined;
+      console.log(`  weakText=${weak} vision=${!!image}${noteArg ? ' note=yes' : ''}`);
+      const ai = await analyzePost({ meta, sharedText, boards, image, note: noteArg }, key);
       if (!boards.includes(ai.board)) boards.push(ai.board);
       console.log(`  AI(${ai.model}): [${ai.boardEmoji ?? ''} ${ai.board}] ${ai.title}`);
       console.log('    ', ai.summary);
