@@ -4,19 +4,19 @@ import type { ExpoConfig } from 'expo/config';
 const geminiApiKey = (process.env.GEMINI_API_KEY || '').trim();
 
 const config: ExpoConfig = {
-  name: 'Полка',
+  name: 'Pinbox',
   slug: 'polka',
-  scheme: 'polka',
-  version: '1.0.0',
+  scheme: 'pinbox',
+  version: '1.1.0',
   orientation: 'portrait',
   icon: './assets/icon.png',
-  userInterfaceStyle: 'light',
-  backgroundColor: '#FAF7F5',
+  userInterfaceStyle: 'automatic',
+  backgroundColor: '#FFFFFF',
   android: {
     package: 'com.zabolotny.polka',
-    versionCode: 1,
+    versionCode: 2,
     adaptiveIcon: {
-      backgroundColor: '#EE5A5F',
+      backgroundColor: '#18181B',
       foregroundImage: './assets/android-icon-foreground.png',
       backgroundImage: './assets/android-icon-background.png',
       monochromeImage: './assets/android-icon-monochrome.png',
@@ -61,11 +61,11 @@ const config: ExpoConfig = {
     'expo-image',
     [
       'expo-splash-screen',
-      { image: './assets/splash-icon.png', imageWidth: 140, resizeMode: 'contain', backgroundColor: '#FAF7F5' },
+      { image: './assets/splash-icon.png', imageWidth: 120, resizeMode: 'contain', backgroundColor: '#FFFFFF', dark: { backgroundColor: '#0B0B0D' } },
     ],
     [
       'expo-notifications',
-      { icon: './assets/notification-icon.png', color: '#E8465B', defaultChannel: 'reminders' },
+      { icon: './assets/notification-icon.png', color: '#EF4444', defaultChannel: 'reminders' },
     ],
   ],
   extra: { geminiApiKey },

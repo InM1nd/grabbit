@@ -6,6 +6,9 @@ import { fetchMetadata } from './core/metadata';
 import type { Metadata } from './core/types';
 import { detectPlatform, extraText, extractUrl, normalizeUrl } from './core/url';
 import * as db from './db';
+import { extractInstagram } from './core/igExtract';
+import { igLoaderReady, loadInstagramPage } from './igSession';
+import { getSettings, loadSettings } from './settings';
 
 const API_KEY: string = (Constants.expoConfig?.extra as any)?.geminiApiKey || '';
 export const hasApiKey = () => !!API_KEY;
@@ -54,6 +57,7 @@ export function processQueue(onlyId?: number): Promise<void> {
   if (running) return running.then(() => (onlyId ? processQueue(onlyId) : undefined));
   running = (async () => {
     try {
+      await loadSettings();
       for (let round = 0; round < 3; round++) {
         const list = await db.pendingPosts();
         const todo = onlyId ? list.filter((p) => p.id === onlyId) : list;
@@ -75,7 +79,7 @@ async function processOne(post: db.Post) {
     author: p.author ?? undefined, image: p.image ?? undefined, blocked: p.metaBlocked, unavailable: p.unavailable, source: 'db',
   };
   if (!p.metaFetched) {
-    const m = await fetchMetadata(p.url);
+    let m = await fetchMetadata(p.url);
     // fetchMetadata never throws; if everything failed we may simply be offline → keep it for a retry,
     // but don't block the AI step forever: after 3 tries accept "blocked".
     if (m.blocked && p.attempts < 2 && !(await online())) {
@@ -83,6 +87,30 @@ async function processOne(post: db.Post) {
       return;
     }
     meta = { ...m, url: p.url };
+    // Private / login-only Instagram post → read it through the user's own session (hidden WebView).
+    const st = getSettings();
+    if (m.platform === 'instagram' && st.igConnected && (m.unavailable || m.blocked || isWeakText(m))) {
+      if (!igLoaderReady()) {
+        if (p.attempts < 3) { // app UI not mounted (e.g. background) → try again a bit later
+          await db.updatePost(p.id, { attempts: p.attempts + 1, next_try_at: Date.now() + 60_000, last_error: 'Жду Instagram-сессию' });
+          return;
+        }
+      } else {
+        try {
+          const raw = await loadInstagramPage(p.url);
+          const ig = extractInstagram(raw);
+          if (ig && (ig.caption || ig.image)) {
+            meta = {
+              ...meta, blocked: false, unavailable: false, source: 'ig-session:' + ig.source,
+              description: ig.caption || meta.description, author: ig.author || meta.author,
+              title: meta.title || (ig.author ? `${ig.authorName ? ig.authorName + ' ' : ''}(${ig.author}) · Instagram` : meta.title),
+              image: ig.image || meta.image,
+            };
+          }
+        } catch { /* fall back to whatever we have */ }
+      }
+    }
+    m = meta;
     const fields: Record<string, any> = {
       title: m.title ?? null, description: m.description ?? null, author: m.author ?? null, image: m.image ?? null,
       meta_fetched: 1, meta_blocked: m.blocked ? 1 : 0, unavailable: m.unavailable ? 1 : 0,
@@ -90,6 +118,12 @@ async function processOne(post: db.Post) {
     if (m.image) fields.local_image = await cacheThumb(p.id, m.image);
     p = { ...p, localImage: fields.local_image ?? p.localImage };
     await db.updatePost(p.id, fields);
+  }
+  const st = getSettings();
+  if (!st.aiEnabled) {
+    const cur = await db.getPost(p.id);
+    await db.updatePost(p.id, { status: 'done', last_error: null, board_id: cur?.boardId ?? st.defaultBoardId ?? null });
+    return;
   }
   if (!API_KEY) {
     await db.updatePost(p.id, { status: 'error', last_error: 'Нет ключа Gemini в сборке' });
@@ -101,11 +135,12 @@ async function processOne(post: db.Post) {
     const note = p.note ?? undefined;
     // Weak caption (emoji/hashtags only) → let Gemini look at the cached preview image.
     let image: { mimeType: string; data: string } | undefined;
-    if (p.localImage && isWeakText(meta, sharedText, note)) {
+    if (st.aiVision && p.localImage && isWeakText(meta, sharedText, note)) {
       try { const data = await new File(p.localImage).base64(); image = { mimeType: sniffMime(data), data }; } catch {}
     }
-    const ai = await analyzePost({ meta, sharedText, boards, image, note }, API_KEY);
-    const boardId = await db.getOrCreateBoard(ai.board, ai.boardEmoji);
+    const ai = await analyzePost({ meta, sharedText, boards, image, note, lang: st.aiLang }, API_KEY);
+    const defaultBoard = st.defaultBoardId != null && (await db.listBoards()).some((b) => b.id === st.defaultBoardId) ? st.defaultBoardId : null;
+    const boardId = defaultBoard ?? (await db.getOrCreateBoard(ai.board, ai.boardEmoji));
     const cur = await db.getPost(p.id);
     if (!cur) return; // deleted meanwhile
     await db.updatePost(p.id, {
@@ -144,4 +179,25 @@ export async function retryAllNow() {
   const d = await db.getDb();
   await d.runAsync("UPDATE posts SET status = 'pending', next_try_at = 0 WHERE status != 'done'");
   await processQueue();
+}
+
+/** After connecting Instagram: re-read every IG post that was unavailable / had no metadata. */
+export async function reprocessInstagramUnavailable(): Promise<number> {
+  const d = await db.getDb();
+  const r = await d.runAsync("UPDATE posts SET status = 'pending', meta_fetched = 0, next_try_at = 0, attempts = 0, last_error = NULL WHERE platform = 'instagram' AND (unavailable = 1 OR meta_blocked = 1)");
+  if (r.changes) processQueue();
+  return r.changes;
+}
+
+export async function countInstagramUnavailable(): Promise<number> {
+  const d = await db.getDb();
+  const r = await d.getFirstAsync<{ n: number }>("SELECT COUNT(*) AS n FROM posts WHERE platform = 'instagram' AND (unavailable = 1 OR meta_blocked = 1)");
+  return r?.n ?? 0;
+}
+
+/** Delete cached preview images (they are re-downloaded on demand by "Переописать"). */
+export async function clearThumbCache() {
+  try { const dir = thumbsDir(); if (dir.exists) dir.delete(); } catch {}
+  const d = await db.getDb();
+  await d.runAsync('UPDATE posts SET local_image = NULL');
 }

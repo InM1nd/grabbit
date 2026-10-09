@@ -1,49 +1,48 @@
 import React, { useMemo } from 'react';
-import { RefreshControl, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
+import { RefreshControl, ScrollView, View, useWindowDimensions } from 'react-native';
 import type { Post } from '../db';
+import { useColors } from '../theme';
 import { PostCard, estimateHeight } from './PostCard';
 
 interface Props {
   posts: Post[];
-  boardNames: Map<number, string>;
   onPress: (p: Post) => void;
-  onLongPress?: (p: Post) => void;
+  onSwipeDelete?: (p: Post) => void;
   header?: React.ReactNode;
   empty?: React.ReactNode;
   refreshing?: boolean;
   onRefresh?: () => void;
 }
 
-const PAD = 12, GAP = 10;
+const PAD = 14, GAP = 12;
 
 /** Two-column Pinterest-style layout: each card goes to the currently shorter column. */
-export function Masonry({ posts, boardNames, onPress, onLongPress, header, empty, refreshing, onRefresh }: Props) {
+export function Masonry({ posts, onPress, onSwipeDelete, header, empty, refreshing, onRefresh }: Props) {
+  const c = useColors();
   const { width } = useWindowDimensions();
   const colW = Math.floor((width - PAD * 2 - GAP) / 2);
   const cols = useMemo(() => {
-    const c: [Post[], Post[]] = [[], []];
+    const out: [Post[], Post[]] = [[], []];
     const h = [0, 0];
     for (const p of posts) {
       const i = h[0] <= h[1] ? 0 : 1;
-      c[i].push(p);
+      out[i].push(p);
       h[i] += estimateHeight(p, colW) + GAP;
     }
-    return c;
+    return out;
   }, [posts, colW]);
   return (
     <ScrollView
-      contentContainerStyle={{ paddingBottom: 110 }}
+      contentContainerStyle={{ paddingBottom: 120 }}
       keyboardShouldPersistTaps="handled"
-      refreshControl={onRefresh ? <RefreshControl refreshing={!!refreshing} onRefresh={onRefresh} /> : undefined}
+      refreshControl={onRefresh ? <RefreshControl refreshing={!!refreshing} onRefresh={onRefresh} colors={[c.accent]} progressBackgroundColor={c.elevated} /> : undefined}
     >
       {header}
       {posts.length === 0 ? empty : (
-        <View style={[styles.row, { paddingHorizontal: PAD }]}>
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start', paddingHorizontal: PAD }}>
           {cols.map((col, i) => (
             <View key={i} style={{ width: colW, marginLeft: i ? GAP : 0 }}>
-              {col.map((p) => (
-                <PostCard key={p.id} post={p} width={colW} boardName={p.boardId ? boardNames.get(p.boardId) : undefined} onPress={onPress} onLongPress={onLongPress} />
-              ))}
+              {col.map((p) => <PostCard key={p.id} post={p} width={colW} onPress={onPress} onSwipeDelete={onSwipeDelete} />)}
             </View>
           ))}
         </View>
@@ -51,5 +50,3 @@ export function Masonry({ posts, boardNames, onPress, onLongPress, header, empty
     </ScrollView>
   );
 }
-
-const styles = StyleSheet.create({ row: { flexDirection: 'row', alignItems: 'flex-start' } });

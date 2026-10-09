@@ -17,7 +17,11 @@ export interface AiInput {
   image?: { mimeType: string; data: string };
   /** Free-text note the user typed about the post. */
   note?: string;
+  /** Language of title/summary/tags: Russian (default), English, or the post's own language. Boards stay Russian. */
+  lang?: 'ru' | 'en' | 'orig';
 }
+
+const LANG_PHRASE = { ru: 'на русском', en: 'на английском (in English)', orig: 'на языке оригинала поста' } as const;
 
 /** Guess image mime type from base64 magic bytes. */
 export function sniffMime(b64: string): string {
@@ -38,8 +42,8 @@ export function isWeakText(meta: Metadata, sharedText?: string, note?: string): 
 const SCHEMA = {
   type: 'OBJECT',
   properties: {
-    title: { type: 'STRING', description: 'Короткий заголовок на русском, до 60 символов' },
-    summary: { type: 'STRING', description: '1–3 предложения на русском: о чём пост и чем полезен' },
+    title: { type: 'STRING', description: 'Короткий заголовок, до 60 символов' },
+    summary: { type: 'STRING', description: '1–3 предложения: о чём пост и чем полезен' },
     tags: { type: 'ARRAY', items: { type: 'STRING' }, description: '3–6 тегов, строчными буквами' },
     board: { type: 'STRING', description: 'Название доски' },
     boardEmoji: { type: 'STRING', description: 'Один эмодзи для доски' },
@@ -47,14 +51,15 @@ const SCHEMA = {
   required: ['title', 'summary', 'tags', 'board'],
 };
 
-export function buildPrompt({ meta, sharedText, boards, image, note }: AiInput): string {
+export function buildPrompt({ meta, sharedText, boards, image, note, lang = 'ru' }: AiInput): string {
+  const L = LANG_PHRASE[lang];
   const lines = [
     'Ты помогаешь вести личный органайзер сохранённых постов из соцсетей (как Pinterest).',
     'Пользователь в основном сохраняет посты про технологии: ИИ-инструменты, программирование, гаджеты, дизайн, стартапы, но может быть что угодно.',
     'По данным ниже:',
-    '1) title — короткий понятный заголовок на русском (до 60 символов), без кликбейта;',
-    '2) summary — 1–3 предложения на русском: о чём пост и что из него можно взять. Если данных мало, честно опиши, что известно (платформа, автор), не выдумывай детали;',
-    '3) tags — 3–6 коротких тегов строчными буквами (названия продуктов/технологий можно латиницей, например "chatgpt", "react");',
+    `1) title — короткий понятный заголовок ${L} (до 60 символов), без кликбейта;`,
+    `2) summary — 1–3 предложения ${L}: о чём пост и что из него можно взять. Если данных мало, честно опиши, что известно (платформа, автор), не выдумывай детали;`,
+    `3) tags — 3–6 коротких тегов строчными буквами ${L} (названия продуктов/технологий можно латиницей, например "chatgpt", "react");`,
     '4) board — тематическая доска. ОБЯЗАТЕЛЬНО выбери одну из существующих досок, если пост к ней подходит по смыслу (верни её название точно как в списке). Новую доску создавай только если ни одна не подходит: 1–3 слова на русском, широкая тема (например "ИИ-инструменты", "Программирование", "Гаджеты", "Дизайн и UI", "Продуктивность"), а не узкая под один пост;',
     '   Не притягивай пост к существующей доске по формальному признаку (платформа, «интернет») — доска должна отражать тему содержания. Если о содержании почти ничего не известно, выбери доску "Разное".',
     '5) boardEmoji — один эмодзи для доски.',
@@ -70,7 +75,7 @@ export function buildPrompt({ meta, sharedText, boards, image, note }: AiInput):
   if (sharedText) lines.push(`Текст, который пришёл вместе со ссылкой: ${sharedText.slice(0, 1500)}`);
   if (note) lines.push(`Заметка пользователя о посте (главный источник): ${note.slice(0, 1000)}`);
   if (image) lines.push('Приложено превью поста (кадр/обложка). Внимательно рассмотри его: текст на картинке, интерфейсы, предметы, людей — и опиши, о чём пост, по тому, что видно. Не выдумывай то, чего не видно.');
-  if (meta.unavailable && !note && !image) lines.push('(Платформа сообщает, что пост недоступен без входа: приватный аккаунт, ограничение по возрасту или пост удалён. Честно напиши это в summary и предложи добавить заметку или скриншот.)');
+  if (meta.unavailable && !note && !image) lines.push('(Платформа сообщает, что пост недоступен без входа: приватный аккаунт, ограничение по возрасту или пост удалён. Честно напиши это в summary и предложи подключить Instagram в настройках или добавить заметку.)');
   else if (meta.blocked && !sharedText && !note && !image) lines.push('(Сайт не отдал метаданные — опирайся на ссылку и платформу.)');
   return lines.join('\n');
 }

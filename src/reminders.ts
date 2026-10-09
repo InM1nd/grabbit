@@ -1,12 +1,10 @@
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import * as db from './db';
+import { getSettings, loadSettings, updateSettings } from './settings';
 
 const DAY = 86_400_000;
-const AGE_MS = 7 * DAY;          // remind about saves older than a week
-const MIN_GAP_MS = 2 * DAY;      // at most one reminder every two days
 const REPEAT_AFTER_MS = 21 * DAY; // don't nag about the same post again for 3 weeks
-const HOUR = 19;                  // fire in the evening
 
 export async function setupNotifications() {
   Notifications.setNotificationHandler({
@@ -31,18 +29,15 @@ export async function ensurePermission(): Promise<boolean> {
   return r.granted;
 }
 
-export async function remindersEnabled() {
-  return (await db.getSetting('reminders')) !== 'off';
-}
 export async function setRemindersEnabled(on: boolean) {
-  await db.setSetting('reminders', on ? 'on' : 'off');
+  await updateSettings({ remOn: on });
   await rescheduleReminder();
 }
 
 /** Next evening slot (19:00) at or after t. */
-function eveningAtOrAfter(t: number): number {
+function eveningAtOrAfter(t: number, hour: number): number {
   const d = new Date(t);
-  d.setHours(HOUR, 0, 0, 0);
+  d.setHours(hour, 0, 0, 0);
   if (d.getTime() < t) d.setDate(d.getDate() + 1);
   return d.getTime();
 }
@@ -71,7 +66,10 @@ export async function rescheduleReminder() {
       await db.setSetting('rem_at', null);
     }
     await Notifications.cancelAllScheduledNotificationsAsync();
-    if (!(await remindersEnabled())) return;
+    const st = await loadSettings().then(() => getSettings());
+    if (!st.remOn) return;
+    const AGE_MS = st.remAgeDays * DAY;
+    const MIN_GAP_MS = st.remEveryDays * DAY;
     const perm = await Notifications.getPermissionsAsync();
     if (!perm.granted) return;
 
@@ -81,8 +79,8 @@ export async function rescheduleReminder() {
     // oldest first; the post becomes eligible once it is AGE_MS old
     const post = candidates[0];
     const earliest = Math.max(post.createdAt + AGE_MS, lastFired + MIN_GAP_MS, now + 30 * 60_000);
-    const at = eveningAtOrAfter(earliest);
-    const days = Math.max(7, Math.round((at - post.createdAt) / DAY));
+    const at = eveningAtOrAfter(earliest, st.remHour);
+    const days = Math.max(st.remAgeDays, Math.round((at - post.createdAt) / DAY));
     const title = post.aiTitle || post.title || post.url;
     await Notifications.scheduleNotificationAsync({
       content: {
