@@ -6,6 +6,7 @@ import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { IG_INJECT_JS, IG_LOGIN_CHECK_JS, IG_LOGOUT_JS, type IgRawPage } from '../core/igExtract';
 import { registerIgLoader } from '../igSession';
 import { useColors } from '../theme';
+import { t } from '../i18n';
 
 // Same engine & cookie jar for login and the hidden loader (Android CookieManager is app-wide & persistent).
 const COMMON: Partial<React.ComponentProps<typeof WebView>> = {
@@ -87,12 +88,12 @@ export function InstagramLoginModal({ visible, mode, onClose, onResult }: LoginP
       <View style={{ flex: 1, backgroundColor: c.bg, paddingTop: insets.top }}>
         <View style={[styles.bar, { borderBottomColor: c.line }]}>
           <Pressable onPress={onClose} hitSlop={12} style={{ padding: 8 }}><Ionicons name="close" size={24} color={c.text} /></Pressable>
-          <Text style={[styles.title, { color: c.text }]}>{mode === 'login' ? 'Вход в Instagram' : 'Выход из Instagram'}</Text>
+          <Text style={[styles.title, { color: c.text }]}>{mode === 'login' ? t('Вход в Instagram') : t('Выход из Instagram')}</Text>
           {loading ? <ActivityIndicator color={c.accent} style={{ marginRight: 12 }} /> : <View style={{ width: 40 }} />}
         </View>
         {mode === 'login' && (
           <Text style={[styles.hint, { color: c.sub }]}>
-            Логин идёт прямо на instagram.com — Pinbox не видит пароль. Сессия хранится только на телефоне и нужна, чтобы читать посты закрытых аккаунтов, на которые ты подписан.
+            {t('Логин идёт прямо на instagram.com — Pinbox не видит пароль. Сессия хранится только на телефоне и нужна, чтобы читать посты закрытых аккаунтов, на которые ты подписан.')}
           </Text>
         )}
         {visible && (

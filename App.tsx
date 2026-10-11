@@ -21,17 +21,21 @@ import { FeedScreen } from './src/ui/FeedScreen';
 import { HiddenInstagramLoader, InstagramLoginModal } from './src/ui/InstagramWeb';
 import { SaveOverlay, type SaveState } from './src/ui/SaveOverlay';
 import { SettingsScreen } from './src/ui/SettingsScreen';
+import { consumeReopenSettings, resolveLang, setLang, t } from './src/i18n';
+import { autoCheck, cleanupUpdates, type UpdateInfo } from './src/updater';
 
 export default function App() {
   const s = useSettings();
   const sys = useColorScheme();
   const dark = s.theme === 'dark' || (s.theme === 'system' && sys === 'dark');
   const pal = dark ? DARK : LIGHT;
+  const lang = resolveLang(s.uiLang);
+  setLang(lang); // before children render
   return (
     <SafeAreaProvider>
       <ThemeContext.Provider value={pal}>
         <StatusBar style={dark ? 'light' : 'dark'} />
-        <Main />
+        <Main key={lang} />
       </ThemeContext.Provider>
     </SafeAreaProvider>
   );
@@ -57,7 +61,8 @@ function Main() {
   const [detailId, setDetailId] = useState<number | null>(null);
   const [saveState, setSaveState] = useState<SaveState>(null);
   const [adding, setAdding] = useState<string | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(consumeReopenSettings);
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [igMode, setIgMode] = useState<'login' | 'logout' | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const fromShare = useRef(false);
@@ -95,6 +100,14 @@ function Main() {
   useEffect(() => {
     setupNotifications();
     processQueue().then(rescheduleReminder);
+    cleanupUpdates();
+    setTimeout(() => {
+      autoCheck().then((info) => {
+        if (!info) return;
+        setUpdateInfo(info);
+        showToast({ msg: t('Доступна версия {v}', { v: info.version }), action: { label: t('Обновить'), onPress: () => { setToastState(null); setSettingsOpen(true); } } }, 8000);
+      });
+    }, 4000);
     const offNet = NetInfo.addEventListener((s) => { if (s.isConnected) processQueue(); });
     const sub = AppState.addEventListener('change', (s) => {
       if (s === 'active') processQueue();
@@ -140,7 +153,7 @@ function Main() {
   const swipeDelete = useCallback((p: db.Post) => {
     setHidden((h) => new Set(h).add(p.id));
     let undone = false;
-    showToast({ msg: 'Удалено', action: { label: 'Отменить', onPress: () => { undone = true; setHidden((h) => { const n = new Set(h); n.delete(p.id); return n; }); toastA.setValue(0); setToastState(null); } } }, 4000);
+    showToast({ msg: t('Удалено'), action: { label: t('Отменить'), onPress: () => { undone = true; setHidden((h) => { const n = new Set(h); n.delete(p.id); return n; }); toastA.setValue(0); setToastState(null); } } }, 4000);
     setTimeout(async () => {
       if (undone) return;
       deleteThumb(p.id);
@@ -169,9 +182,9 @@ function Main() {
   const addLink = async (text: string) => {
     setAdding(null);
     const r = await saveShared(text, null, null);
-    if (r.status === 'no-url') { toast('Это не похоже на ссылку'); return; }
-    if (r.status === 'duplicate') { toast('Уже сохранено'); setDetailId(r.id); return; }
-    toast('Сохранено — ИИ разбирает');
+    if (r.status === 'no-url') { toast(t('Это не похоже на ссылку')); return; }
+    if (r.status === 'duplicate') { toast(t('Уже сохранено')); setDetailId(r.id); return; }
+    toast(t('Сохранено — ИИ разбирает'));
     processQueue(r.id).then(rescheduleReminder);
     ensurePermission().catch(() => {});
   };
@@ -182,8 +195,8 @@ function Main() {
     await updateSettings({ igConnected: loggedIn, igUserId: loggedIn ? userId : null });
     if (mode === 'login' && loggedIn) {
       const n = await reprocessInstagramUnavailable();
-      toast(n ? `Instagram подключён — перечитываю ${n}` : 'Instagram подключён');
-    } else if (mode === 'logout') toast(loggedIn ? 'Не удалось выйти' : 'Вышел из Instagram');
+      toast(n ? t('Instagram подключён — перечитываю {n}', { n }) : t('Instagram подключён'));
+    } else if (mode === 'logout') toast(loggedIn ? t('Не удалось выйти') : t('Вышел из Instagram'));
   };
 
   const visiblePosts = hidden.size ? posts.filter((p) => !hidden.has(p.id)) : posts;
@@ -195,17 +208,17 @@ function Main() {
         {searching && tab === 'feed' ? (
           <View style={[styles.search, { backgroundColor: c.card }]}>
             <Ionicons name="search" size={18} color={c.faint} />
-            <TextInput value={query} onChangeText={setQuery} autoFocus placeholder="Поиск: слово, тег, автор" placeholderTextColor={c.faint}
+            <TextInput value={query} onChangeText={setQuery} autoFocus placeholder={t('Поиск: слово, тег, автор')} placeholderTextColor={c.faint}
               style={[styles.searchInput, { color: c.text }]} returnKeyType="search" />
             <IconBtn name="close" size={20} color={c.sub} onPress={() => { setSearching(false); setQuery(''); }} />
           </View>
         ) : (
           <>
             <Text style={[styles.logo, { color: c.text }]} numberOfLines={1}>
-              {tab === 'boards' ? 'Доски' : currentBoard ? `${currentBoard.emoji ?? ''} ${currentBoard.name}`.trim() : 'Pinbox'}
+              {tab === 'boards' ? t('Доски') : currentBoard ? `${currentBoard.emoji ?? ''} ${currentBoard.name}`.trim() : 'Pinbox'}
             </Text>
-            {tab === 'feed' && <IconBtn name="search" onPress={() => setSearching(true)} label="Поиск" />}
-            <IconBtn name="settings-outline" onPress={() => setSettingsOpen(true)} label="Настройки" />
+            {tab === 'feed' && <IconBtn name="search" onPress={() => setSearching(true)} label={t('Поиск')} />}
+            <IconBtn name="settings-outline" onPress={() => setSettingsOpen(true)} label={t('Настройки')} />
           </>
         )}
       </View>
@@ -221,20 +234,20 @@ function Main() {
       </View>
 
       <View style={[styles.tabbar, { paddingBottom: Math.max(insets.bottom, 8), backgroundColor: c.tabbar, borderTopColor: c.line }]}>
-        <TabBtn icon="grid-outline" label="Лента" active={tab === 'feed'} onPress={() => setTab('feed')} />
-        <TabBtn icon="albums-outline" label="Доски" active={tab === 'boards'} onPress={() => setTab('boards')} />
+        <TabBtn icon="grid-outline" label={t('Лента')} active={tab === 'feed'} onPress={() => setTab('feed')} />
+        <TabBtn icon="albums-outline" label={t('Доски')} active={tab === 'boards'} onPress={() => setTab('boards')} />
       </View>
-      <Pressable onPress={openAdd} accessibilityLabel="Добавить ссылку"
+      <Pressable onPress={openAdd} accessibilityLabel={t('Добавить ссылку')}
         style={({ pressed }) => [styles.fab, { bottom: Math.max(insets.bottom, 8) + 64, backgroundColor: c.text, opacity: pressed ? 0.85 : 1 }]}>
         <Ionicons name="add" size={26} color={c.bg} />
       </Pressable>
 
       <HiddenInstagramLoader enabled={st.igConnected} />
       <DetailScreen postId={detailId} boards={boards} onClose={() => setDetailId(null)} toast={toast} onConnectInstagram={() => setIgMode('login')} />
-      <SettingsScreen visible={settingsOpen} onClose={() => setSettingsOpen(false)} boards={boards} pendingCount={pending} toast={toast} onInstagram={setIgMode} />
+      <SettingsScreen visible={settingsOpen} onClose={() => setSettingsOpen(false)} boards={boards} pendingCount={pending} toast={toast} onInstagram={setIgMode} initialUpdate={updateInfo} />
       <InstagramLoginModal visible={igMode != null} mode={igMode ?? 'login'} onClose={() => setIgMode(null)} onResult={onIgResult} />
-      <PromptModal visible={adding != null} title="Добавить ссылку" hint="Пост, рилс, видео или статья." placeholder="https://…"
-        initial={adding ?? ''} okLabel="Сохранить" onCancel={() => setAdding(null)} onOk={addLink} />
+      <PromptModal visible={adding != null} title={t('Добавить ссылку')} hint={t('Пост, рилс, видео или статья.')} placeholder="https://…"
+        initial={adding ?? ''} okLabel={t('Сохранить')} onCancel={() => setAdding(null)} onOk={addLink} />
       <SaveOverlay state={saveState} delaySec={st.returnDelay} onDone={finishShare}
         onOpen={(id) => { fromShare.current = false; setSaveState(null); setTab('feed'); setDetailId(id); }} />
 

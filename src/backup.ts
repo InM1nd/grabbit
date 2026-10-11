@@ -3,6 +3,7 @@ import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import * as db from './db';
 import { emitDataChanged } from './events';
+import { t } from './i18n';
 
 export interface BackupFile {
   app: 'pinbox';
@@ -33,8 +34,8 @@ export async function buildBackup(): Promise<BackupFile> {
 
 /** Validate a parsed backup; throws a Russian message on bad input. */
 export function validateBackup(x: any): BackupFile {
-  if (!x || typeof x !== 'object' || !Array.isArray(x.posts)) throw new Error('Это не файл экспорта Pinbox');
-  if (x.app !== 'pinbox' && x.app !== 'polka') throw new Error('Файл не от Pinbox');
+  if (!x || typeof x !== 'object' || !Array.isArray(x.posts)) throw new Error(t('Это не файл экспорта Pinbox'));
+  if (x.app !== 'pinbox' && x.app !== 'polka') throw new Error(t('Файл не от Pinbox'));
   x.boards = Array.isArray(x.boards) ? x.boards : [];
   x.posts = x.posts.filter((p: any) => p && typeof p.url === 'string' && /^https?:\/\//.test(p.url));
   return x as BackupFile;
@@ -47,7 +48,7 @@ export async function exportBackup(): Promise<number> {
   if (f.exists) f.delete();
   f.create();
   f.write(JSON.stringify(data, null, 1));
-  await Sharing.shareAsync(f.uri, { mimeType: 'application/json', dialogTitle: 'Экспорт Pinbox' });
+  await Sharing.shareAsync(f.uri, { mimeType: 'application/json', dialogTitle: t('Экспорт Pinbox') });
   return data.posts.length;
 }
 
@@ -57,7 +58,7 @@ export async function importBackup(): Promise<{ added: number; skipped: number }
   if (res.canceled || !res.assets?.[0]) return null;
   const text = await new File(res.assets[0].uri).text();
   let parsed: any;
-  try { parsed = JSON.parse(text); } catch { throw new Error('Файл повреждён (не JSON)'); }
+  try { parsed = JSON.parse(text); } catch { throw new Error(t('Файл повреждён (не JSON)')); }
   const data = validateBackup(parsed);
   const d = await db.getDb();
   const boardIds = new Map<string, number>();

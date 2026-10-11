@@ -9,6 +9,7 @@ import * as db from './db';
 import { extractInstagram } from './core/igExtract';
 import { igLoaderReady, loadInstagramPage } from './igSession';
 import { getSettings, loadSettings } from './settings';
+import { t } from './i18n';
 
 const API_KEY: string = (Constants.expoConfig?.extra as any)?.geminiApiKey || '';
 export const hasApiKey = () => !!API_KEY;
@@ -83,7 +84,7 @@ async function processOne(post: db.Post) {
     // fetchMetadata never throws; if everything failed we may simply be offline → keep it for a retry,
     // but don't block the AI step forever: after 3 tries accept "blocked".
     if (m.blocked && p.attempts < 2 && !(await online())) {
-      await db.updatePost(p.id, { attempts: p.attempts + 1, next_try_at: Date.now() + backoffMs(p.attempts + 1), last_error: 'Нет сети' });
+      await db.updatePost(p.id, { attempts: p.attempts + 1, next_try_at: Date.now() + backoffMs(p.attempts + 1), last_error: t('Нет сети') });
       return;
     }
     meta = { ...m, url: p.url };
@@ -92,7 +93,7 @@ async function processOne(post: db.Post) {
     if (m.platform === 'instagram' && st.igConnected && (m.unavailable || m.blocked || isWeakText(m))) {
       if (!igLoaderReady()) {
         if (p.attempts < 3) { // app UI not mounted (e.g. background) → try again a bit later
-          await db.updatePost(p.id, { attempts: p.attempts + 1, next_try_at: Date.now() + 60_000, last_error: 'Жду Instagram-сессию' });
+          await db.updatePost(p.id, { attempts: p.attempts + 1, next_try_at: Date.now() + 60_000, last_error: t('Жду Instagram-сессию') });
           return;
         }
       } else {
@@ -126,7 +127,7 @@ async function processOne(post: db.Post) {
     return;
   }
   if (!API_KEY) {
-    await db.updatePost(p.id, { status: 'error', last_error: 'Нет ключа Gemini в сборке' });
+    await db.updatePost(p.id, { status: 'error', last_error: t('Нет ключа Gemini в сборке') });
     return;
   }
   try {

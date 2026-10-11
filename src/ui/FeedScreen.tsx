@@ -4,6 +4,7 @@ import type { Board, Post } from '../db';
 import { useColors } from '../theme';
 import { Chip } from './common';
 import { Masonry } from './Masonry';
+import { t } from '../i18n';
 
 interface Props {
   posts: Post[];
@@ -21,7 +22,7 @@ export function FeedScreen({ posts, boards, boardId, setBoardId, query, onOpen, 
   const c = useColors();
   const header = (
     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips} keyboardShouldPersistTaps="handled">
-      <Chip label={boardId == null ? `Все · ${posts.length}` : 'Все'} active={boardId == null} onPress={() => setBoardId(null)} />
+      <Chip label={boardId == null ? `${t('Все')} · ${posts.length}` : t('Все')} active={boardId == null} onPress={() => setBoardId(null)} />
       {boards.map((b) => (
         <Chip
           key={b.id}
@@ -36,14 +37,14 @@ export function FeedScreen({ posts, boards, boardId, setBoardId, query, onOpen, 
     <View style={styles.empty}>
       {query ? (
         <>
-          <Text style={[styles.emptyTitle, { color: c.text }]}>Ничего не нашлось</Text>
-          <Text style={[styles.emptyText, { color: c.sub }]}>Попробуй другое слово или тег.</Text>
+          <Text style={[styles.emptyTitle, { color: c.text }]}>{t('Ничего не нашлось')}</Text>
+          <Text style={[styles.emptyText, { color: c.sub }]}>{t('Попробуй другое слово или тег.')}</Text>
         </>
       ) : (
         <>
-          <Text style={[styles.emptyTitle, { color: c.text }]}>Пока пусто</Text>
+          <Text style={[styles.emptyTitle, { color: c.text }]}>{t('Пока пусто')}</Text>
           <Text style={[styles.emptyText, { color: c.sub }]}>
-            В Instagram, TikTok, YouTube или X нажми «Поделиться» → Pinbox. ИИ опишет пост и положит на доску.
+            {t('В Instagram, TikTok, YouTube или X нажми «Поделиться» → Pinbox. ИИ опишет пост и положит на доску.')}
           </Text>
         </>
       )}

@@ -3,6 +3,7 @@ import * as db from './db';
 
 export type ThemePref = 'system' | 'light' | 'dark';
 export type AiLang = 'ru' | 'en' | 'orig';
+export type UiLang = 'system' | 'ru' | 'en' | 'uk';
 
 export interface Settings {
   theme: ThemePref;
@@ -17,12 +18,17 @@ export interface Settings {
   remAgeDays: number;     // remind about saves older than N days
   igConnected: boolean;
   igUserId: string | null;
+  uiLang: UiLang;
+  updAuto: boolean;       // check GitHub for a new version on launch
+  updLastCheck: number;
+  updSkipVersion: string | null;
 }
 
 export const DEFAULTS: Settings = {
   theme: 'system', aiEnabled: true, aiVision: true, aiLang: 'ru', defaultBoardId: null,
   returnDelay: 2, remOn: true, remHour: 19, remEveryDays: 2, remAgeDays: 7,
   igConnected: false, igUserId: null,
+  uiLang: 'system', updAuto: true, updLastCheck: 0, updSkipVersion: null,
 };
 
 let cache: Settings = { ...DEFAULTS };

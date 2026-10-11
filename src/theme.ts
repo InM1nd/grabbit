@@ -36,14 +36,4 @@ export const PLATFORM_ICON: Record<string, string> = {
   vk: 'logo-vk', github: 'logo-github', web: 'globe-outline',
 };
 
-export function timeAgo(ts: number): string {
-  const s = Math.max(1, Math.round((Date.now() - ts) / 1000));
-  if (s < 60) return 'только что';
-  const m = Math.round(s / 60);
-  if (m < 60) return `${m} мин назад`;
-  const h = Math.round(m / 60);
-  if (h < 24) return `${h} ч назад`;
-  const d = Math.round(h / 24);
-  if (d < 7) return `${d} дн назад`;
-  return new Date(ts).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
-}
+export { timeAgo } from './i18n';

@@ -4,6 +4,7 @@ import React, { memo, useRef } from 'react';
 import { Animated, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { Post } from '../db';
 import { PLATFORM_COLOR, PLATFORM_ICON, useColors } from '../theme';
+import { t } from '../i18n';
 
 /** Rough width/height of a thumbnail by platform — vertical video gets tall cards. */
 export function thumbAspect(p: Post): number {
@@ -55,12 +56,12 @@ function PostCardImpl({ post, width, onPress, onSwipeDelete }: Props) {
               <Image source={{ uri: img }} style={{ width, height: width / thumbAspect(post), borderRadius: 16, backgroundColor: c.card }} contentFit="cover" transition={120} recyclingKey={String(post.id)} />
               <View style={styles.badge}><Ionicons name={PLATFORM_ICON[post.platform] as any} size={11} color="#fff" /></View>
               {!post.openedAt && <View style={[styles.dot, { backgroundColor: c.accent }]} />}
-              <Text style={[styles.title, { color: c.text }]} numberOfLines={2}>{pending ? 'Разбираю…' : title}</Text>
+              <Text style={[styles.title, { color: c.text }]} numberOfLines={2}>{pending ? t('Разбираю…') : title}</Text>
             </View>
           ) : (
             <View style={[styles.block, { backgroundColor: PLATFORM_COLOR[post.platform] + (c.dark ? '33' : '1F') }]}>
               <Ionicons name={PLATFORM_ICON[post.platform] as any} size={16} color={c.sub} />
-              <Text style={[styles.blockTitle, { color: c.text }]} numberOfLines={5}>{pending ? 'Разбираю…' : title}</Text>
+              <Text style={[styles.blockTitle, { color: c.text }]} numberOfLines={5}>{pending ? t('Разбираю…') : title}</Text>
               {!post.openedAt && <View style={[styles.dot, { backgroundColor: c.accent }]} />}
             </View>
           )}

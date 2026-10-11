@@ -1,7 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import Constants from 'expo-constants';
 import React, { useEffect, useState } from 'react';
-import { Alert, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Linking, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { exportBackup, importBackup } from '../backup';
 import { GEMINI_MODELS } from '../core/ai';
@@ -10,7 +9,9 @@ import { clearThumbCache, countInstagramUnavailable, hasApiKey, processQueue, re
 import { ensurePermission, rescheduleReminder } from '../reminders';
 import { updateSettings, useSettings, type Settings } from '../settings';
 import { useColors } from '../theme';
+import { checkForUpdate, currentVersion, downloadAndInstall, releasesPage, UpdateError, type UpdateInfo } from '../updater';
 import { ActionSheet, IconBtn } from './common';
+import { markReopenSettings, t } from '../i18n';
 
 interface Props {
   visible: boolean;
@@ -19,15 +20,45 @@ interface Props {
   pendingCount: number;
   toast: (m: string) => void;
   onInstagram: (mode: 'login' | 'logout') => void;
+  initialUpdate?: UpdateInfo | null;
 }
 
-export function SettingsScreen({ visible, onClose, boards, pendingCount, toast, onInstagram }: Props) {
+export function SettingsScreen({ visible, onClose, boards, pendingCount, toast, onInstagram, initialUpdate }: Props) {
   const c = useColors();
   const s = useSettings();
   const insets = useSafeAreaInsets();
   const [boardPick, setBoardPick] = useState(false);
   const [igLocked, setIgLocked] = useState(0);
   useEffect(() => { if (visible) countInstagramUnavailable().then(setIgLocked); }, [visible, s.igConnected]);
+
+  const [upd, setUpd] = useState<{ busy?: boolean; sub?: string; info?: UpdateInfo; newer?: boolean; notConfigured?: boolean; progress?: number | null }>({});
+  const check = async () => {
+    setUpd({ busy: true });
+    try {
+      const r = await checkForUpdate();
+      setUpd({ info: r.info, newer: r.newer, sub: r.newer ? t('Есть новая версия') : t('У тебя последняя версия') });
+    } catch (e: any) {
+      if (e instanceof UpdateError && e.code === 'not-configured') setUpd({ notConfigured: true, sub: t('Нет доступа к релизам (приватный репозиторий)') });
+      else if (e instanceof UpdateError && e.code === 'no-apk') setUpd({ sub: t('В последнем релизе нет APK') });
+      else setUpd({ sub: t('Не удалось проверить: {e}', { e: String(e?.message || e) }) });
+    }
+  };
+  const install = async () => {
+    if (!upd.info || upd.progress != null) return;
+    const info = upd.info;
+    setUpd((u) => ({ ...u, progress: 0 }));
+    try {
+      await downloadAndInstall(info, (f) => setUpd((u) => ({ ...u, progress: f })));
+      setUpd((u) => ({ ...u, progress: null }));
+    } catch (e: any) {
+      setUpd((u) => ({ ...u, progress: null }));
+      Alert.alert(t('Обновление'), t('Не удалось скачать: {e}', { e: String(e?.message || e) }), [
+        { text: t('Отмена'), style: 'cancel' },
+        { text: t('Открыть в браузере'), onPress: () => Linking.openURL(info.pageUrl || releasesPage()) },
+      ]);
+    }
+  };
+  useEffect(() => { if (visible && initialUpdate) setUpd({ info: initialUpdate, newer: true, sub: t('Есть новая версия') }); }, [visible, initialUpdate]);
 
   const set = async (patch: Partial<Settings>, reschedule = false) => {
     await updateSettings(patch);
@@ -39,98 +70,120 @@ export function SettingsScreen({ visible, onClose, boards, pendingCount, toast, 
     <Modal visible={visible} animationType="slide" onRequestClose={onClose} statusBarTranslucent>
       <View style={{ flex: 1, backgroundColor: c.bg, paddingTop: insets.top }}>
         <View style={styles.top}>
-          <IconBtn name="chevron-back" size={26} onPress={onClose} label="Назад" />
-          <Text style={[styles.h1, { color: c.text }]}>Настройки</Text>
+          <IconBtn name="chevron-back" size={26} onPress={onClose} label={t('Назад')} />
+          <Text style={[styles.h1, { color: c.text }]}>{t('Настройки')}</Text>
         </View>
         <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 40 + insets.bottom }}>
-          <Section title="Оформление">
-            <Row label="Тема">
-              <Seg value={s.theme} onChange={(v) => set({ theme: v })} options={[['system', 'Авто'], ['light', 'Светлая'], ['dark', 'Тёмная']]} />
+          <Section title={t('Оформление')}>
+            <Row label={t('Язык интерфейса')} column>
+              <Seg value={s.uiLang} onChange={(v) => { if (v !== s.uiLang) { markReopenSettings(); set({ uiLang: v }); } }} options={[['system', t('Системный')], ['ru', 'RU'], ['en', 'EN'], ['uk', 'UK']]} />
+            </Row>
+            <Row label={t('Тема')}>
+              <Seg value={s.theme} onChange={(v) => set({ theme: v })} options={[['system', t('Авто')], ['light', t('Светлая')], ['dark', t('Тёмная')]]} />
             </Row>
           </Section>
 
-          <Section title="ИИ-описания">
-            <Row label="Описывать посты ИИ" sub={hasApiKey() ? `Gemini ${GEMINI_MODELS[0]}` : 'Ключ Gemini не найден в сборке'}>
+          <Section title={t('ИИ-описания')}>
+            <Row label={t('Описывать посты ИИ')} sub={hasApiKey() ? `Gemini ${GEMINI_MODELS[0]}` : t('Ключ Gemini не найден в сборке')}>
               <Sw value={s.aiEnabled} onChange={(v) => set({ aiEnabled: v })} />
             </Row>
-            <Row label="Язык описаний" column>
-              <Seg value={s.aiLang} onChange={(v) => set({ aiLang: v })} options={[['ru', 'Русский'], ['en', 'English'], ['orig', 'Как в посте']]} />
+            <Row label={t('Язык описаний')} column>
+              <Seg value={s.aiLang} onChange={(v) => set({ aiLang: v })} options={[['ru', t('Русский')], ['en', 'English'], ['orig', t('Как в посте')]]} />
             </Row>
-            <Row label="Смотреть на превью" sub="Если подпись пустая, ИИ разберёт картинку">
+            <Row label={t('Смотреть на превью')} sub={t('Если подпись пустая, ИИ разберёт картинку')}>
               <Sw value={s.aiVision} onChange={(v) => set({ aiVision: v })} />
             </Row>
-            <Row label="Доска по умолчанию" sub={defBoard ? `${defBoard.emoji ?? '📌'} ${defBoard.name}` : 'Авто — выбирает ИИ'} onPress={() => setBoardPick(true)}>
+            <Row label={t('Доска по умолчанию')} sub={defBoard ? `${defBoard.emoji ?? '📌'} ${defBoard.name}` : t('Авто — выбирает ИИ')} onPress={() => setBoardPick(true)}>
               <Ionicons name="chevron-forward" size={18} color={c.faint} />
             </Row>
-            <Row label="Очередь" sub={pendingCount ? `${pendingCount} ждут обработки` : 'Пусто'}>
-              {pendingCount > 0 && <SmallBtn label="Повторить" onPress={async () => { toast('Обрабатываю…'); await retryAllNow(); }} />}
+            <Row label={t('Очередь')} sub={pendingCount ? t('{n} ждут обработки', { n: pendingCount }) : t('Пусто')}>
+              {pendingCount > 0 && <SmallBtn label={t('Повторить')} onPress={async () => { toast(t('Обрабатываю…')); await retryAllNow(); }} />}
             </Row>
           </Section>
 
-          <Section title="После «Поделиться»">
-            <Row label="Вернуться в приложение" column>
-              <Seg value={String(s.returnDelay)} onChange={(v) => set({ returnDelay: Number(v) })} options={[['0', 'Сразу'], ['2', '2 с'], ['5', '5 с'], ['-1', 'Не уходить']]} />
+          <Section title={t('После «Поделиться»')}>
+            <Row label={t('Вернуться в приложение')} column>
+              <Seg value={String(s.returnDelay)} onChange={(v) => set({ returnDelay: Number(v) })} options={[['0', t('Сразу')], ['2', t('2 с')], ['5', t('5 с')], ['-1', t('Не уходить')]]} />
             </Row>
           </Section>
 
-          <Section title="Напоминания">
-            <Row label="Напоминать о забытом" sub="Про пост, который ты сохранил и не открыл">
+          <Section title={t('Напоминания')}>
+            <Row label={t('Напоминать о забытом')} sub={t('Про пост, который ты сохранил и не открыл')}>
               <Sw value={s.remOn} onChange={async (v) => {
-                if (v && !(await ensurePermission())) toast('Разреши уведомления в настройках Android');
+                if (v && !(await ensurePermission())) toast(t('Разреши уведомления в настройках Android'));
                 set({ remOn: v }, true);
               }} />
             </Row>
             {s.remOn && (
               <>
-                <Row label="Время">
+                <Row label={t('Время')}>
                   <View style={styles.stepper}>
                     <SmallBtn label="−" onPress={() => set({ remHour: (s.remHour + 23) % 24 }, true)} />
                     <Text style={[styles.time, { color: c.text }]}>{String(s.remHour).padStart(2, '0')}:00</Text>
                     <SmallBtn label="+" onPress={() => set({ remHour: (s.remHour + 1) % 24 }, true)} />
                   </View>
                 </Row>
-                <Row label="Не чаще чем" column>
-                  <Seg value={String(s.remEveryDays)} onChange={(v) => set({ remEveryDays: Number(v) }, true)} options={[['1', 'Раз в день'], ['2', 'Раз в 2 дня'], ['7', 'Раз в неделю']]} />
+                <Row label={t('Не чаще чем')} column>
+                  <Seg value={String(s.remEveryDays)} onChange={(v) => set({ remEveryDays: Number(v) }, true)} options={[['1', t('Раз в день')], ['2', t('Раз в 2 дня')], ['7', t('Раз в неделю')]]} />
                 </Row>
-                <Row label="О постах старше" column>
-                  <Seg value={String(s.remAgeDays)} onChange={(v) => set({ remAgeDays: Number(v) }, true)} options={[['3', '3 дней'], ['7', 'недели'], ['14', '2 недель']]} />
+                <Row label={t('О постах старше')} column>
+                  <Seg value={String(s.remAgeDays)} onChange={(v) => set({ remAgeDays: Number(v) }, true)} options={[['3', t('3 дней')], ['7', t('недели')], ['14', t('2 недель')]]} />
                 </Row>
               </>
             )}
           </Section>
 
           <Section title="Instagram">
-            <Row label={s.igConnected ? 'Подключён' : 'Не подключён'} sub="Нужен, чтобы читать посты закрытых аккаунтов. Сессия хранится только на телефоне.">
-              {s.igConnected ? <SmallBtn label="Выйти" onPress={() => onInstagram('logout')} /> : <SmallBtn label="Войти" accent onPress={() => onInstagram('login')} />}
+            <Row label={s.igConnected ? t('Подключён') : t('Не подключён')} sub={t('Нужен, чтобы читать посты закрытых аккаунтов. Сессия хранится только на телефоне.')}>
+              {s.igConnected ? <SmallBtn label={t('Выйти')} onPress={() => onInstagram('logout')} /> : <SmallBtn label={t('Войти')} accent onPress={() => onInstagram('login')} />}
             </Row>
             {s.igConnected && igLocked > 0 && (
-              <Row label={`Закрытые посты: ${igLocked}`} sub="Перечитать их через твою сессию">
-                <SmallBtn label="Обновить" onPress={async () => { const n = await reprocessInstagramUnavailable(); toast(`Обновляю ${n}…`); }} />
+              <Row label={t('Закрытые посты: {n}', { n: igLocked })} sub={t('Перечитать их через твою сессию')}>
+                <SmallBtn label={t('Обновить')} onPress={async () => { const n = await reprocessInstagramUnavailable(); toast(t('Обновляю {n}…', { n })); }} />
               </Row>
             )}
           </Section>
 
-          <Section title="Данные">
-            <Row label="Экспорт в JSON" sub="Все посты, доски, теги и заметки" onPress={async () => { try { const n = await exportBackup(); toast(`Экспортировано: ${n}`); } catch (e: any) { toast(e?.message || 'Не вышло'); } }}>
+          <Section title={t('Данные')}>
+            <Row label={t('Экспорт в JSON')} sub={t('Все посты, доски, теги и заметки')} onPress={async () => { try { const n = await exportBackup(); toast(t('Экспортировано: {n}', { n })); } catch (e: any) { toast(e?.message || t('Не вышло')); } }}>
               <Ionicons name="share-outline" size={18} color={c.faint} />
             </Row>
-            <Row label="Импорт из JSON" sub="Существующие ссылки не дублируются" onPress={async () => {
-              try { const r = await importBackup(); if (r) { toast(`Добавлено ${r.added}, пропущено ${r.skipped}`); processQueue(); } } catch (e: any) { Alert.alert('Импорт', e?.message || 'Не вышло'); }
+            <Row label={t('Импорт из JSON')} sub={t('Существующие ссылки не дублируются')} onPress={async () => {
+              try { const r = await importBackup(); if (r) { toast(t('Добавлено {a}, пропущено {s}', { a: r.added, s: r.skipped })); processQueue(); } } catch (e: any) { Alert.alert(t('Импорт'), e?.message || t('Не вышло')); }
             }}>
               <Ionicons name="download-outline" size={18} color={c.faint} />
             </Row>
-            <Row label="Очистить кэш превью" onPress={() => Alert.alert('Очистить кэш превью?', 'Картинки будут грузиться из сети заново.', [
-              { text: 'Отмена', style: 'cancel' }, { text: 'Очистить', style: 'destructive', onPress: async () => { await clearThumbCache(); toast('Кэш очищен'); } },
+            <Row label={t('Очистить кэш превью')} onPress={() => Alert.alert(t('Очистить кэш превью?'), t('Картинки будут грузиться из сети заново.'), [
+              { text: t('Отмена'), style: 'cancel' }, { text: t('Очистить'), style: 'destructive', onPress: async () => { await clearThumbCache(); toast(t('Кэш очищен')); } },
             ])}>
               <Ionicons name="trash-outline" size={18} color={c.faint} />
             </Row>
           </Section>
 
-          <Text style={[styles.about, { color: c.faint }]}>Pinbox {Constants.expoConfig?.version} · данные хранятся только на телефоне</Text>
+          <Section title={t('Обновления')}>
+            <Row label={t('Версия {v}', { v: currentVersion() })} sub={upd.sub}>
+              {upd.busy ? <ActivityIndicator color={c.text} /> : <SmallBtn label={t('Проверить обновления')} onPress={check} />}
+            </Row>
+            {upd.info && upd.newer && (
+              <Row label={t('Доступна версия {v}', { v: upd.info.version })} sub={upd.info.notes ? upd.info.notes.split('\n').slice(0, 4).join('\n') : undefined}>
+                <SmallBtn label={upd.progress != null ? `${Math.round(upd.progress * 100)}%` : t('Установить')} accent onPress={install} />
+              </Row>
+            )}
+            {upd.notConfigured && (
+              <Row label={t('Открыть страницу релизов')} sub={t('Репозиторий приватный — скачай APK в браузере, войдя в GitHub')} onPress={() => Linking.openURL(releasesPage())}>
+                <Ionicons name="open-outline" size={18} color={c.faint} />
+              </Row>
+            )}
+            <Row label={t('Проверять при запуске')}>
+              <Sw value={s.updAuto} onChange={(v) => set({ updAuto: v })} />
+            </Row>
+          </Section>
+
+          <Text style={[styles.about, { color: c.faint }]}>Pinbox {currentVersion()} · {t('Данные хранятся только на телефоне')}</Text>
         </ScrollView>
       </View>
-      <ActionSheet visible={boardPick} title="Доска по умолчанию" onClose={() => setBoardPick(false)} actions={[
-        { label: `✨  Авто — выбирает ИИ${s.defaultBoardId == null ? '  ✓' : ''}`, onPress: () => set({ defaultBoardId: null }) },
+      <ActionSheet visible={boardPick} title={t('Доска по умолчанию')} onClose={() => setBoardPick(false)} actions={[
+        { label: `✨  ${t('Авто — выбирает ИИ')}${s.defaultBoardId == null ? '  ✓' : ''}`, onPress: () => set({ defaultBoardId: null }) },
         ...boards.map((b) => ({ label: `${b.emoji ?? '📌'}  ${b.name}${s.defaultBoardId === b.id ? '  ✓' : ''}`, onPress: () => set({ defaultBoardId: b.id }) })),
       ]} />
     </Modal>

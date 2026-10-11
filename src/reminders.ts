@@ -2,6 +2,7 @@ import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import * as db from './db';
 import { getSettings, loadSettings, updateSettings } from './settings';
+import { daysPhrase, t } from './i18n';
 
 const DAY = 86_400_000;
 const REPEAT_AFTER_MS = 21 * DAY; // don't nag about the same post again for 3 weeks
@@ -12,7 +13,7 @@ export async function setupNotifications() {
   });
   if (Platform.OS === 'android') {
     await Notifications.setNotificationChannelAsync('reminders', {
-      name: 'Напоминания о сохранённом',
+      name: t('Напоминания о сохранённом'),
       importance: Notifications.AndroidImportance.DEFAULT,
     });
   }
@@ -84,7 +85,7 @@ export async function rescheduleReminder() {
     const title = post.aiTitle || post.title || post.url;
     await Notifications.scheduleNotificationAsync({
       content: {
-        title: `Ты сохранил это ${days} ${plural(days, 'день', 'дня', 'дней')} назад 👀`,
+        title: t('Ты сохранил это {d} назад 👀', { d: daysPhrase(days) }),
         body: `${title}${post.summary ? ' — ' + post.summary.slice(0, 120) : ''}`,
         data: { postId: post.id },
       },

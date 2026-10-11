@@ -2,26 +2,30 @@ import type { ExpoConfig } from 'expo/config';
 
 // Personal app: the Gemini key is read from the build machine's env and baked into the bundle.
 const geminiApiKey = (process.env.GEMINI_API_KEY || '').trim();
+// In-app updates (optional): a READ-ONLY fine-grained token for the private repo, or a public manifest URL.
+// Never put the push token here.
+const updateToken = (process.env.PINBOX_UPDATE_TOKEN || '').trim();
+const updateManifestUrl = (process.env.PINBOX_UPDATE_MANIFEST_URL || '').trim();
 
 const config: ExpoConfig = {
   name: 'Pinbox',
   slug: 'polka',
   scheme: 'pinbox',
-  version: '1.1.0',
+  version: '1.2.0',
   orientation: 'portrait',
   icon: './assets/icon.png',
   userInterfaceStyle: 'automatic',
   backgroundColor: '#FFFFFF',
   android: {
     package: 'com.zabolotny.polka',
-    versionCode: 2,
+    versionCode: 3,
     adaptiveIcon: {
       backgroundColor: '#18181B',
       foregroundImage: './assets/android-icon-foreground.png',
       backgroundImage: './assets/android-icon-background.png',
       monochromeImage: './assets/android-icon-monochrome.png',
     },
-    permissions: ['android.permission.POST_NOTIFICATIONS', 'android.permission.ACCESS_NETWORK_STATE'],
+    permissions: ['android.permission.POST_NOTIFICATIONS', 'android.permission.ACCESS_NETWORK_STATE', 'android.permission.REQUEST_INSTALL_PACKAGES'],
     blockedPermissions: [
       'android.permission.RECORD_AUDIO',
       'android.permission.SYSTEM_ALERT_WINDOW',
@@ -68,7 +72,7 @@ const config: ExpoConfig = {
       { icon: './assets/notification-icon.png', color: '#EF4444', defaultChannel: 'reminders' },
     ],
   ],
-  extra: { geminiApiKey },
+  extra: { geminiApiKey, updateRepo: 'InM1nd/polka', updateToken, updateManifestUrl },
 };
 
 export default config;

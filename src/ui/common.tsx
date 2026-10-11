@@ -3,6 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { KeyboardAvoidingView, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '../theme';
+import { t } from '../i18n';
 
 export function IconBtn({ name, onPress, size = 22, color, label }: { name: any; onPress: () => void; size?: number; color?: string; label?: string }) {
   const c = useColors();
@@ -51,7 +52,7 @@ interface PromptProps {
   onCancel: () => void; onOk: (value: string) => void;
 }
 
-export function PromptModal({ visible, title, placeholder, initial = '', okLabel = 'Готово', hint, multiline, onCancel, onOk }: PromptProps) {
+export function PromptModal({ visible, title, placeholder, initial = '', okLabel = t('Готово'), hint, multiline, onCancel, onOk }: PromptProps) {
   const c = useColors();
   const [v, setV] = useState(initial);
   useEffect(() => { if (visible) setV(initial); }, [visible, initial]);
@@ -68,7 +69,7 @@ export function PromptModal({ visible, title, placeholder, initial = '', okLabel
             onSubmitEditing={() => !multiline && v.trim() && onOk(v.trim())}
           />
           <View style={styles.btns}>
-            <Pressable onPress={onCancel} style={styles.btn}><Text style={{ color: c.sub, fontSize: 15, fontWeight: '500' }}>Отмена</Text></Pressable>
+            <Pressable onPress={onCancel} style={styles.btn}><Text style={{ color: c.sub, fontSize: 15, fontWeight: '500' }}>{t('Отмена')}</Text></Pressable>
             <Pressable onPress={() => v.trim() && onOk(v.trim())} style={[styles.btn, { backgroundColor: c.text, opacity: v.trim() ? 1 : 0.4 }]}>
               <Text style={{ color: c.bg, fontSize: 15, fontWeight: '600' }}>{okLabel}</Text>
             </Pressable>

@@ -5,6 +5,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensio
 import * as db from '../db';
 import { useColors } from '../theme';
 import { ActionSheet, PromptModal } from './common';
+import { t } from '../i18n';
 
 interface Props { boards: db.Board[]; unsortedCount: number; onOpenBoard: (id: number | null) => void }
 
@@ -28,30 +29,30 @@ export function BoardsScreen({ boards, unsortedCount, onOpenBoard }: Props) {
         ))}
         <Pressable onPress={() => setCreating(true)} style={[styles.newBoard, { width: w, height: w, borderColor: c.line }]}>
           <Ionicons name="add" size={26} color={c.faint} />
-          <Text style={{ color: c.faint, marginTop: 4 }}>Новая доска</Text>
+          <Text style={{ color: c.faint, marginTop: 4 }}>{t('Новая доска')}</Text>
         </Pressable>
       </View>
-      {unsortedCount > 0 && <Text style={[styles.note, { color: c.faint }]}>Без доски: {unsortedCount}</Text>}
-      <Text style={[styles.note, { color: c.faint }]}>Долгое нажатие — переименовать или удалить</Text>
+      {unsortedCount > 0 && <Text style={[styles.note, { color: c.faint }]}>{t('Без доски: {n}', { n: unsortedCount })}</Text>}
+      <Text style={[styles.note, { color: c.faint }]}>{t('Долгое нажатие — переименовать или удалить')}</Text>
 
       <ActionSheet
         visible={!!menu}
         title={menu ? `${menu.emoji ?? ''} ${menu.name}`.trim() : ''}
         onClose={() => setMenu(null)}
         actions={menu ? [
-          { label: 'Переименовать', icon: 'create-outline', onPress: () => setRenaming(menu) },
+          { label: t('Переименовать'), icon: 'create-outline', onPress: () => setRenaming(menu) },
           {
-            label: 'Удалить доску', icon: 'trash-outline', destructive: true,
-            onPress: () => Alert.alert('Удалить доску?', 'Посты останутся в ленте, просто без доски.', [
-              { text: 'Отмена', style: 'cancel' },
-              { text: 'Удалить', style: 'destructive', onPress: () => db.deleteBoard(menu.id) },
+            label: t('Удалить доску'), icon: 'trash-outline', destructive: true,
+            onPress: () => Alert.alert(t('Удалить доску?'), t('Посты останутся в ленте, просто без доски.'), [
+              { text: t('Отмена'), style: 'cancel' },
+              { text: t('Удалить'), style: 'destructive', onPress: () => db.deleteBoard(menu.id) },
             ]),
           },
         ] : []}
       />
-      <PromptModal visible={!!renaming} title="Переименовать доску" initial={renaming?.name} hint="Если такая доска уже есть, они объединятся."
+      <PromptModal visible={!!renaming} title={t('Переименовать доску')} initial={renaming?.name} hint={t('Если такая доска уже есть, они объединятся.')}
         onCancel={() => setRenaming(null)} onOk={async (v) => { if (renaming) await db.renameBoard(renaming.id, v); setRenaming(null); }} />
-      <PromptModal visible={creating} title="Новая доска" placeholder="Например: UI-идеи" hint="ИИ будет класть сюда подходящие посты."
+      <PromptModal visible={creating} title={t('Новая доска')} placeholder={t('Например: UI-идеи')} hint={t('ИИ будет класть сюда подходящие посты.')}
         onCancel={() => setCreating(false)} onOk={async (v) => { await db.getOrCreateBoard(v); setCreating(false); }} />
     </ScrollView>
   );

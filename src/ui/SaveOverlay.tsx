@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as db from '../db';
 import { onDataChanged } from '../events';
 import { useColors } from '../theme';
+import { t } from '../i18n';
 
 export type SaveState = { kind: 'saved' | 'duplicate'; id: number } | { kind: 'no-url' } | null;
 
@@ -44,7 +45,7 @@ export function SaveOverlay({ state, delaySec, onDone, onOpen }: Props) {
   }, [state]);
 
   if (!state) return null;
-  const text = state.kind === 'no-url' ? 'В сообщении нет ссылки' : state.kind === 'duplicate' ? 'Уже сохранено' : 'Сохранено';
+  const text = state.kind === 'no-url' ? t('В сообщении нет ссылки') : state.kind === 'duplicate' ? t('Уже сохранено') : t('Сохранено');
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
       <Animated.View style={[styles.pill, { bottom: 24 + insets.bottom, backgroundColor: c.text, transform: [{ translateY: y }] }]}>
@@ -55,7 +56,7 @@ export function SaveOverlay({ state, delaySec, onDone, onOpen }: Props) {
         {state.kind !== 'no-url' && pending && !label && <ActivityIndicator size="small" color={c.bg} style={{ marginLeft: 6 }} />}
         {state.kind !== 'no-url' && (
           <Pressable onPress={() => onOpen(state.id)} hitSlop={10} style={{ marginLeft: 'auto', paddingLeft: 12 }}>
-            <Text style={[styles.link, { color: c.bg }]}>Изменить</Text>
+            <Text style={[styles.link, { color: c.bg }]}>{t('Изменить')}</Text>
           </Pressable>
         )}
       </Animated.View>
