@@ -11,14 +11,14 @@ const config: ExpoConfig = {
   name: 'Pinbox',
   slug: 'polka',
   scheme: 'pinbox',
-  version: '1.2.0',
+  version: '1.2.1',
   orientation: 'portrait',
   icon: './assets/icon.png',
   userInterfaceStyle: 'automatic',
   backgroundColor: '#FFFFFF',
   android: {
     package: 'com.zabolotny.polka',
-    versionCode: 3,
+    versionCode: 4,
     adaptiveIcon: {
       backgroundColor: '#18181B',
       foregroundImage: './assets/android-icon-foreground.png',
