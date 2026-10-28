@@ -1,8 +1,13 @@
 import * as SQLite from 'expo-sqlite';
 import type { Platform } from './core/types';
 import { emitDataChanged } from './events';
+import { EMBED_MODEL, unpackVec } from './core/embed';
 
 export type PostStatus = 'pending' | 'done' | 'error';
+/** User's own mark: try it / done / not important. null = none. */
+export type { PostMark } from './core/marks';
+import type { PostMark } from './core/marks';
+export const MARKS: PostMark[] = ['try', 'done', 'skip'];
 
 export interface Post {
   id: number;
@@ -29,6 +34,8 @@ export interface Post {
   createdAt: number;
   openedAt: number | null;
   remindedAt: number | null;
+  mark: PostMark | null;
+  embedding: number[] | null;
 }
 
 export interface Board {
@@ -80,6 +87,10 @@ export function getDb(): Promise<SQLite.SQLiteDatabase> {
       const cols = (await db.getAllAsync<{ name: string }>('PRAGMA table_info(posts)')).map((c) => c.name);
       if (!cols.includes('note')) await db.execAsync('ALTER TABLE posts ADD COLUMN note TEXT');
       if (!cols.includes('unavailable')) await db.execAsync('ALTER TABLE posts ADD COLUMN unavailable INTEGER NOT NULL DEFAULT 0');
+      // v3 (1.3.0): user mark + semantic embedding. Additive, nullable → safe for existing installs.
+      if (!cols.includes('mark')) await db.execAsync('ALTER TABLE posts ADD COLUMN mark TEXT');
+      if (!cols.includes('embedding')) await db.execAsync('ALTER TABLE posts ADD COLUMN embedding TEXT');
+      if (!cols.includes('embed_model')) await db.execAsync('ALTER TABLE posts ADD COLUMN embed_model TEXT');
       await db.execAsync('PRAGMA foreign_keys = ON;');
       return db;
     })();
@@ -97,6 +108,8 @@ function rowToPost(r: any): Post {
     aiTitle: r.ai_title, summary: r.summary, tags, boardId: r.board_id,
     status: r.status, attempts: r.attempts, nextTryAt: r.next_try_at, lastError: r.last_error,
     createdAt: r.created_at, openedAt: r.opened_at, remindedAt: r.reminded_at,
+    mark: r.mark === 'try' || r.mark === 'done' || r.mark === 'skip' ? r.mark : null,
+    embedding: r.embed_model === EMBED_MODEL ? unpackVec(r.embedding) : null,
   };
 }
 
@@ -122,7 +135,15 @@ export async function getPost(id: number): Promise<Post | null> {
   return r ? rowToPost(r) : null;
 }
 
-export async function listPosts(opts: { boardId?: number | null; query?: string } = {}): Promise<Post[]> {
+/**
+ * `marks`: show only these marks ('none' = unmarked). Default: everything except 'skip'
+ * («Неважно» is hidden unless explicitly asked for).
+ */
+export { markAllowed, type MarkFilter } from './core/marks';
+import type { MarkFilter } from './core/marks';
+import { markAllowed } from './core/marks';
+
+export async function listPosts(opts: { boardId?: number | null; query?: string; mark?: MarkFilter } = {}): Promise<Post[]> {
   const db = await getDb();
   const where: string[] = [];
   const params: any[] = [];
@@ -143,7 +164,11 @@ export async function listPosts(opts: { boardId?: number | null; query?: string 
       return terms.every((t) => hay.includes(t.replace(/^#/, '')));
     });
   }
-  return posts.map((x) => x.post);
+  return posts.map((x) => x.post).filter((p) => markAllowed(p.mark, opts.mark ?? 'all'));
+}
+
+export async function setMark(id: number, mark: PostMark | null) {
+  await updatePost(id, { mark });
 }
 
 export async function updatePost(id: number, fields: Partial<Record<string, any>>) {
@@ -254,8 +279,32 @@ export async function nextRetryAt(): Promise<number | null> {
   return r?.t ?? null;
 }
 
+/** Reminder candidates: never opened and not marked Done / Not important. */
 export async function unopenedPosts(): Promise<Post[]> {
   const db = await getDb();
-  const rows = await db.getAllAsync('SELECT * FROM posts WHERE opened_at IS NULL ORDER BY created_at ASC');
+  const rows = await db.getAllAsync("SELECT * FROM posts WHERE opened_at IS NULL AND (mark IS NULL OR mark NOT IN ('done', 'skip')) ORDER BY created_at ASC");
   return rows.map(rowToPost);
+}
+
+/** Processed posts that still lack an embedding for the current model (backfill queue). */
+export async function postsNeedingEmbedding(limit = 32): Promise<(Post & { boardName: string })[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync(
+    `SELECT p.*, b.name AS board_name FROM posts p LEFT JOIN boards b ON b.id = p.board_id
+     WHERE p.status = 'done' AND (p.embedding IS NULL OR p.embed_model IS NULL OR p.embed_model != ?)
+     ORDER BY p.created_at DESC LIMIT ?`, EMBED_MODEL, limit,
+  );
+  return rows.map((r: any) => ({ ...rowToPost(r), boardName: r.board_name || '' }));
+}
+
+export async function setEmbedding(id: number, packed: string | null) {
+  const db = await getDb();
+  // no emitDataChanged: invisible to the UI, avoids re-render storms during backfill
+  await db.runAsync('UPDATE posts SET embedding = ?, embed_model = ? WHERE id = ?', packed, packed ? EMBED_MODEL : null, id);
+}
+
+/** Mark an embedding as stale (content changed). */
+export async function clearEmbedding(id: number) {
+  const db = await getDb();
+  await db.runAsync('UPDATE posts SET embedding = NULL, embed_model = NULL WHERE id = ?', id);
 }

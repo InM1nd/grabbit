@@ -10,12 +10,12 @@ import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-cont
 import { extractUrl } from './src/core/url';
 import * as db from './src/db';
 import { onDataChanged } from './src/events';
-import { deleteThumb, processQueue, reprocessInstagramUnavailable, retryAllNow, saveShared } from './src/processor';
+import { deleteThumb, processQueue, reprocessInstagramUnavailable, retryAllNow, saveShared, semanticSearch } from './src/processor';
 import { ensurePermission, rescheduleReminder, setupNotifications } from './src/reminders';
 import { updateSettings, useSettings } from './src/settings';
 import { DARK, LIGHT, ThemeContext, useColors } from './src/theme';
 import { BoardsScreen } from './src/ui/BoardsScreen';
-import { IconBtn, PromptModal } from './src/ui/common';
+import { ActionSheet, IconBtn, MARK_ICON, PromptModal, markLabel } from './src/ui/common';
 import { DetailScreen } from './src/ui/DetailScreen';
 import { FeedScreen } from './src/ui/FeedScreen';
 import { HiddenInstagramLoader, InstagramLoginModal } from './src/ui/InstagramWeb';
@@ -53,6 +53,13 @@ function Main() {
   const [boardId, setBoardId] = useState<number | null>(null);
   const [query, setQuery] = useState('');
   const [searching, setSearching] = useState(false);
+  const [debQuery, setDebQuery] = useState('');
+  const [semantic, setSemantic] = useState(true);
+  const [semActive, setSemActive] = useState(false);
+  const [markFilter, setMarkFilter] = useState<db.MarkFilter>('default');
+  const [markPost, setMarkPost] = useState<db.Post | null>(null);
+  const offlineWarned = useRef(false);
+  useEffect(() => { const h = setTimeout(() => setDebQuery(query), query ? 450 : 0); return () => clearTimeout(h); }, [query]);
   const [posts, setPosts] = useState<db.Post[]>([]);
   const [boards, setBoards] = useState<db.Board[]>([]);
   const [unsorted, setUnsorted] = useState(0);
@@ -83,12 +90,29 @@ function Main() {
 
   // ---------- data ----------
   const reload = useCallback(async () => {
-    const [p, b, all, n] = await Promise.all([db.listPosts({ boardId, query }), db.listBoards(), db.listPosts(), db.countPending()]);
+    const q = debQuery.trim();
+    const [textHits, b, all, n] = await Promise.all([db.listPosts({ boardId, query: q, mark: markFilter }), db.listBoards(), db.listPosts(), db.countPending()]);
+    let p = textHits;
+    let sem = false;
+    if (q && semantic) {
+      const pool = all.filter((x) => (boardId == null || x.boardId === boardId) && db.markAllowed(x.mark, markFilter));
+      const hits = await semanticSearch(q, pool);
+      if (hits) {
+        sem = true;
+        // meaning-ranked first, then exact text matches the embedding missed
+        const ids = new Set(hits.map((x) => x.id));
+        p = [...hits, ...textHits.filter((x) => !ids.has(x.id))];
+      } else if (!offlineWarned.current) {
+        offlineWarned.current = true;
+        toast(t('Поиск по смыслу недоступен — ищу по словам'));
+      }
+    }
+    setSemActive(sem);
     setPosts(p);
     setBoards(b);
     setUnsorted(all.filter((x) => x.boardId == null).length);
     setPending(n);
-  }, [boardId, query]);
+  }, [boardId, debQuery, semantic, markFilter, toast]);
   useEffect(() => { reload(); }, [reload]);
   useEffect(() => {
     let t: ReturnType<typeof setTimeout> | null = null;
@@ -208,8 +232,12 @@ function Main() {
         {searching && tab === 'feed' ? (
           <View style={[styles.search, { backgroundColor: c.card }]}>
             <Ionicons name="search" size={18} color={c.faint} />
-            <TextInput value={query} onChangeText={setQuery} autoFocus placeholder={t('Поиск: слово, тег, автор')} placeholderTextColor={c.faint}
+            <TextInput value={query} onChangeText={setQuery} autoFocus placeholder={semantic ? t('Спроси: «как монтировать видео»') : t('Поиск: слово, тег, автор')} placeholderTextColor={c.faint}
               style={[styles.searchInput, { color: c.text }]} returnKeyType="search" />
+            <Pressable onPress={() => { offlineWarned.current = false; setSemantic(!semantic); }} hitSlop={6} accessibilityLabel={t('по смыслу')}
+              style={[styles.semBtn, { backgroundColor: semantic ? c.chipActive : c.chip }]}>
+              <Text style={{ fontSize: 12.5, fontWeight: '600', color: semantic ? c.onChipActive : c.text }}>✨ {t('по смыслу')}</Text>
+            </Pressable>
             <IconBtn name="close" size={20} color={c.sub} onPress={() => { setSearching(false); setQuery(''); }} />
           </View>
         ) : (
@@ -225,7 +253,8 @@ function Main() {
 
       <View style={{ flex: 1 }}>
         {tab === 'feed' ? (
-          <FeedScreen posts={visiblePosts} boards={boards} boardId={boardId} setBoardId={setBoardId} query={query}
+          <FeedScreen posts={visiblePosts} boards={boards} boardId={boardId} setBoardId={setBoardId} query={debQuery} semantic={semActive}
+            markFilter={markFilter} setMarkFilter={setMarkFilter} onLongPress={setMarkPost}
             onOpen={(p) => setDetailId(p.id)} onSwipeDelete={swipeDelete}
             onRefresh={async () => { setRefreshing(true); await retryAllNow(); await reload(); setRefreshing(false); }} refreshing={refreshing} />
         ) : (
@@ -243,7 +272,14 @@ function Main() {
       </Pressable>
 
       <HiddenInstagramLoader enabled={st.igConnected} />
-      <DetailScreen postId={detailId} boards={boards} onClose={() => setDetailId(null)} toast={toast} onConnectInstagram={() => setIgMode('login')} />
+      <ActionSheet visible={!!markPost} title={markPost ? (markPost.aiTitle || markPost.title || markPost.url).slice(0, 60) : undefined} onClose={() => setMarkPost(null)} actions={[
+        ...(['try', 'done', 'skip'] as const).map((m) => ({
+          label: `${markLabel(m)}${markPost?.mark === m ? '  ✓' : ''}`, icon: MARK_ICON[m],
+          onPress: async () => { if (markPost) { await db.setMark(markPost.id, markPost.mark === m ? null : m); if (m === 'skip' && markPost.mark !== 'skip') toast(t('Скрыто из ленты: «Неважно»')); } },
+        })),
+        ...(markPost?.mark ? [{ label: t('Снять отметку'), icon: 'close-circle-outline', onPress: () => { if (markPost) db.setMark(markPost.id, null); } }] : []),
+      ]} />
+      <DetailScreen postId={detailId} boards={boards} onClose={() => setDetailId(null)} onOpenPost={setDetailId} toast={toast} onConnectInstagram={() => setIgMode('login')} />
       <SettingsScreen visible={settingsOpen} onClose={() => setSettingsOpen(false)} boards={boards} pendingCount={pending} toast={toast} onInstagram={setIgMode} initialUpdate={updateInfo} />
       <InstagramLoginModal visible={igMode != null} mode={igMode ?? 'login'} onClose={() => setIgMode(null)} onResult={onIgResult} />
       <PromptModal visible={adding != null} title={t('Добавить ссылку')} hint={t('Пост, рилс, видео или статья.')} placeholder="https://…"
@@ -280,6 +316,7 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', paddingLeft: 18, paddingRight: 8, height: 56 },
   logo: { flex: 1, fontSize: 26, fontWeight: '800', letterSpacing: -0.6 },
   search: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 22, paddingLeft: 14, height: 44, marginRight: 6 },
+  semBtn: { borderRadius: 14, paddingHorizontal: 9, height: 28, justifyContent: 'center', marginLeft: 4 },
   searchInput: { flex: 1, marginLeft: 8, fontSize: 15.5, paddingVertical: 0 },
   tabbar: { position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row', justifyContent: 'space-around', borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 8 },
   tab: { alignItems: 'center', width: 110 },

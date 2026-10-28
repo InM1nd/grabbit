@@ -5,6 +5,7 @@ import { Animated, PanResponder, Pressable, StyleSheet, Text, View } from 'react
 import type { Post } from '../db';
 import { PLATFORM_COLOR, PLATFORM_ICON, useColors } from '../theme';
 import { t } from '../i18n';
+import { MARK_ICON } from './common';
 
 /** Rough width/height of a thumbnail by platform — vertical video gets tall cards. */
 export function thumbAspect(p: Post): number {
@@ -23,9 +24,9 @@ export function estimateHeight(p: Post, width: number): number {
   return hasImg ? width / thumbAspect(p) + 12 + lines * 19 + 14 : Math.max(110, 40 + Math.min(5, Math.ceil(cardTitle(p).length / 14)) * 23);
 }
 
-interface Props { post: Post; width: number; onPress: (p: Post) => void; onSwipeDelete?: (p: Post) => void }
+interface Props { post: Post; width: number; onPress: (p: Post) => void; onSwipeDelete?: (p: Post) => void; onLongPress?: (p: Post) => void }
 
-function PostCardImpl({ post, width, onPress, onSwipeDelete }: Props) {
+function PostCardImpl({ post, width, onPress, onSwipeDelete, onLongPress }: Props) {
   const c = useColors();
   const img = post.localImage || post.image;
   const title = cardTitle(post);
@@ -50,17 +51,21 @@ function PostCardImpl({ post, width, onPress, onSwipeDelete }: Props) {
     <View style={{ marginBottom: 14 }}>
       <View style={[StyleSheet.absoluteFill, styles.trash]}><Ionicons name="trash-outline" size={22} color={c.danger} /></View>
       <Animated.View {...pan.panHandlers} style={{ transform: [{ translateX: x }], opacity: fade }}>
-        <Pressable onPress={() => onPress(post)} style={({ pressed }) => ({ width, opacity: pressed ? 0.8 : 1 })}>
+        <Pressable onPress={() => onPress(post)} onLongPress={onLongPress ? () => onLongPress(post) : undefined} delayLongPress={350} style={({ pressed }) => ({ width, opacity: pressed ? 0.8 : 1 })}>
           {img ? (
             <View>
               <Image source={{ uri: img }} style={{ width, height: width / thumbAspect(post), borderRadius: 16, backgroundColor: c.card }} contentFit="cover" transition={120} recyclingKey={String(post.id)} />
               <View style={styles.badge}><Ionicons name={PLATFORM_ICON[post.platform] as any} size={11} color="#fff" /></View>
               {!post.openedAt && <View style={[styles.dot, { backgroundColor: c.accent }]} />}
+              {!!post.mark && <View style={styles.markBadge}><Ionicons name={MARK_ICON[post.mark] as any} size={12} color="#fff" /></View>}
               <Text style={[styles.title, { color: c.text }]} numberOfLines={2}>{pending ? t('Разбираю…') : title}</Text>
             </View>
           ) : (
             <View style={[styles.block, { backgroundColor: PLATFORM_COLOR[post.platform] + (c.dark ? '33' : '1F') }]}>
-              <Ionicons name={PLATFORM_ICON[post.platform] as any} size={16} color={c.sub} />
+              <View style={{ flexDirection: 'row', gap: 6 }}>
+                <Ionicons name={PLATFORM_ICON[post.platform] as any} size={16} color={c.sub} />
+                {!!post.mark && <Ionicons name={MARK_ICON[post.mark] as any} size={16} color={c.sub} />}
+              </View>
               <Text style={[styles.blockTitle, { color: c.text }]} numberOfLines={5}>{pending ? t('Разбираю…') : title}</Text>
               {!post.openedAt && <View style={[styles.dot, { backgroundColor: c.accent }]} />}
             </View>
@@ -76,6 +81,7 @@ export const PostCard = memo(PostCardImpl);
 const styles = StyleSheet.create({
   trash: { alignItems: 'flex-end', justifyContent: 'center', paddingRight: 16 },
   badge: { position: 'absolute', top: 8, left: 8, backgroundColor: 'rgba(0,0,0,0.35)', borderRadius: 9, padding: 4 },
+  markBadge: { position: 'absolute', top: 24, right: 6, backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 10, padding: 4 },
   dot: { position: 'absolute', top: 10, right: 10, width: 8, height: 8, borderRadius: 4 },
   title: { fontSize: 14, lineHeight: 19, fontWeight: '600', marginTop: 8, paddingHorizontal: 2 },
   block: { borderRadius: 16, padding: 14, minHeight: 110 },

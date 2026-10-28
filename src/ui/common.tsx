@@ -97,3 +97,8 @@ const styles = StyleSheet.create({
   btns: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 16, gap: 8 },
   btn: { paddingHorizontal: 16, height: 40, borderRadius: 12, justifyContent: 'center' },
 });
+
+export const MARK_ICON = { try: 'flask-outline', done: 'checkmark-circle', skip: 'moon-outline' } as const;
+export function markLabel(m: 'try' | 'done' | 'skip'): string {
+  return m === 'try' ? t('Попробовать') : m === 'done' ? t('Сделано') : t('Неважно');
+}

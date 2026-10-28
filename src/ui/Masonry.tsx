@@ -8,6 +8,7 @@ interface Props {
   posts: Post[];
   onPress: (p: Post) => void;
   onSwipeDelete?: (p: Post) => void;
+  onLongPress?: (p: Post) => void;
   header?: React.ReactNode;
   empty?: React.ReactNode;
   refreshing?: boolean;
@@ -17,7 +18,7 @@ interface Props {
 const PAD = 14, GAP = 12;
 
 /** Two-column Pinterest-style layout: each card goes to the currently shorter column. */
-export function Masonry({ posts, onPress, onSwipeDelete, header, empty, refreshing, onRefresh }: Props) {
+export function Masonry({ posts, onPress, onSwipeDelete, onLongPress, header, empty, refreshing, onRefresh }: Props) {
   const c = useColors();
   const { width } = useWindowDimensions();
   const colW = Math.floor((width - PAD * 2 - GAP) / 2);
@@ -42,7 +43,7 @@ export function Masonry({ posts, onPress, onSwipeDelete, header, empty, refreshi
         <View style={{ flexDirection: 'row', alignItems: 'flex-start', paddingHorizontal: PAD }}>
           {cols.map((col, i) => (
             <View key={i} style={{ width: colW, marginLeft: i ? GAP : 0 }}>
-              {col.map((p) => <PostCard key={p.id} post={p} width={colW} onPress={onPress} onSwipeDelete={onSwipeDelete} />)}
+              {col.map((p) => <PostCard key={p.id} post={p} width={colW} onPress={onPress} onSwipeDelete={onSwipeDelete} onLongPress={onLongPress} />)}
             </View>
           ))}
         </View>

@@ -1,7 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as Clipboard from 'expo-clipboard';
 import { Image } from 'expo-image';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Linking, Modal, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PLATFORM_LABEL } from '../core/url';
@@ -10,8 +10,9 @@ import { onDataChanged } from '../events';
 import { deleteThumb, reprocess } from '../processor';
 import { useSettings } from '../settings';
 import { PLATFORM_ICON, timeAgo, useColors } from '../theme';
-import { ActionSheet, Chip, IconBtn, PromptModal } from './common';
-import { thumbAspect } from './PostCard';
+import { ActionSheet, Chip, IconBtn, MARK_ICON, PromptModal, markLabel } from './common';
+import { similarPosts } from '../core/embed';
+import { cardTitle, thumbAspect } from './PostCard';
 import { t } from '../i18n';
 
 interface Props {
@@ -20,9 +21,10 @@ interface Props {
   onClose: () => void;
   toast: (msg: string) => void;
   onConnectInstagram: () => void;
+  onOpenPost?: (id: number) => void;
 }
 
-export function DetailScreen({ postId, boards, onClose, toast, onConnectInstagram }: Props) {
+export function DetailScreen({ postId, boards, onClose, toast, onConnectInstagram, onOpenPost }: Props) {
   const c = useColors();
   const st = useSettings();
   const insets = useSafeAreaInsets();
@@ -35,12 +37,23 @@ export function DetailScreen({ postId, boards, onClose, toast, onConnectInstagra
   const [editNote, setEditNote] = useState(false);
   const [tagInput, setTagInput] = useState('');
   const [busy, setBusy] = useState(false);
+  const [similar, setSimilar] = useState<db.Post[]>([]);
+  const scrollRef = useRef<ScrollView>(null);
 
   useEffect(() => {
     if (postId == null) { setPost(null); return; }
     let alive = true;
-    const load = () => db.getPost(postId).then((p) => alive && setPost(p));
+    const load = async () => {
+      const p = await db.getPost(postId);
+      if (!alive) return;
+      setPost(p);
+      if (p) {
+        const all = await db.listPosts({ mark: 'default' });
+        if (alive) setSimilar(similarPosts(p, all, 6));
+      }
+    };
     load();
+    scrollRef.current?.scrollTo({ y: 0, animated: false });
     db.markOpened(postId);
     setShowDesc(false);
     const off = onDataChanged(load);
@@ -59,10 +72,16 @@ export function DetailScreen({ postId, boards, onClose, toast, onConnectInstagra
   const setBoard = async (id: number | null) => { if (post) await db.updatePost(post.id, { board_id: id }); setPickBoard(false); };
   const addTag = async () => {
     const t = tagInput.trim().toLowerCase().replace(/^#/, '');
-    if (post && t && !post.tags.includes(t)) await db.updatePost(post.id, { tags: [...post.tags, t] });
+    if (post && t && !post.tags.includes(t)) { await db.clearEmbedding(post.id); await db.updatePost(post.id, { tags: [...post.tags, t] }); }
     setTagInput('');
   };
-  const removeTag = async (t: string) => { if (post) await db.updatePost(post.id, { tags: post.tags.filter((x) => x !== t) }); };
+  const removeTag = async (t: string) => { if (post) { await db.clearEmbedding(post.id); await db.updatePost(post.id, { tags: post.tags.filter((x) => x !== t) }); } };
+  const setMark = async (m: db.PostMark) => {
+    if (!post) return;
+    const next = post.mark === m ? null : m;
+    await db.setMark(post.id, next);
+    if (next === 'skip') toast(t('Скрыто из ленты: «Неважно»'));
+  };
   const redo = async (refetch: boolean) => {
     if (!post) return;
     setBusy(true);
@@ -88,7 +107,7 @@ export function DetailScreen({ postId, boards, onClose, toast, onConnectInstagra
           <IconBtn name="ellipsis-horizontal" onPress={() => setMenu(true)} label={t('Ещё')} />
         </View>
         {!post ? <ActivityIndicator style={{ marginTop: 40 }} color={c.accent} /> : (
-          <ScrollView contentContainerStyle={{ paddingBottom: 110 + insets.bottom }} keyboardShouldPersistTaps="handled">
+          <ScrollView ref={scrollRef} contentContainerStyle={{ paddingBottom: 110 + insets.bottom }} keyboardShouldPersistTaps="handled">
             {!!img && (
               <Pressable onPress={openOriginal} style={{ paddingHorizontal: 14 }}>
                 <Image source={{ uri: img }} style={{ width: width - 28, height: Math.min((width - 28) / thumbAspect(post), 540), borderRadius: 22, backgroundColor: c.card }} contentFit="cover" />
@@ -124,6 +143,16 @@ export function DetailScreen({ postId, boards, onClose, toast, onConnectInstagra
               )}
 
               <View style={[styles.row, { flexWrap: 'wrap', gap: 8, marginTop: 18 }]}>
+                {(['try', 'done', 'skip'] as const).map((m) => (
+                  <Pressable key={m} onPress={() => setMark(m)} accessibilityLabel={markLabel(m)}
+                    style={[styles.markBtn, { backgroundColor: post.mark === m ? c.chipActive : c.chip }]}>
+                    <Ionicons name={MARK_ICON[m] as any} size={15} color={post.mark === m ? c.onChipActive : c.sub} />
+                    <Text style={{ fontSize: 13.5, fontWeight: '600', color: post.mark === m ? c.onChipActive : c.text }}>{markLabel(m)}</Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              <View style={[styles.row, { flexWrap: 'wrap', gap: 8, marginTop: 12 }]}>
                 <Chip label={board ? `${board.emoji ?? '📌'} ${board.name}` : t('＋ Доска')} active onPress={() => setPickBoard(true)} />
                 {post.tags.map((tag) => <Chip key={tag} label={`#${tag}`} onLongPress={() => removeTag(tag)} onPress={() => Alert.alert(`#${tag}`, undefined, [{ text: t('Отмена'), style: 'cancel' }, { text: t('Удалить тег'), style: 'destructive', onPress: () => removeTag(tag) }])} />)}
                 <TextInput value={tagInput} onChangeText={setTagInput} placeholder={t('+ тег')} placeholderTextColor={c.faint} onSubmitEditing={addTag} blurOnSubmit={false} returnKeyType="done"
@@ -142,6 +171,24 @@ export function DetailScreen({ postId, boards, onClose, toast, onConnectInstagra
                   <Text style={[styles.label, { color: c.faint }]}>{t('Оригинал')} {showDesc ? '▴' : '▾'}</Text>
                   <Text style={[styles.body, { color: c.sub }]} numberOfLines={showDesc ? undefined : 3} selectable>{post.description}</Text>
                 </Pressable>
+              )}
+
+              {similar.length > 0 && (
+                <View style={{ marginTop: 26 }}>
+                  <Text style={[styles.label, { color: c.faint }]}>{t('Похожие посты')}</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingRight: 20 }} style={{ marginHorizontal: -2 }}>
+                    {similar.map((s) => {
+                      const si = s.localImage || s.image;
+                      return (
+                        <Pressable key={s.id} onPress={() => onOpenPost?.(s.id)} style={({ pressed }) => [styles.simCard, { backgroundColor: c.card, opacity: pressed ? 0.8 : 1 }]}>
+                          {si ? <Image source={{ uri: si }} style={styles.simImg} contentFit="cover" recyclingKey={'s' + s.id} />
+                            : <View style={[styles.simImg, { alignItems: 'center', justifyContent: 'center' }]}><Ionicons name={PLATFORM_ICON[s.platform] as any} size={22} color={c.sub} /></View>}
+                          <Text style={[styles.simTitle, { color: c.text }]} numberOfLines={2}>{cardTitle(s)}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
               )}
             </View>
           </ScrollView>
@@ -186,6 +233,10 @@ const styles = StyleSheet.create({
   help: { borderRadius: 16, padding: 14, marginTop: 16 },
   helpText: { fontSize: 14, lineHeight: 20 },
   tagInput: { minWidth: 80, height: 34, borderRadius: 18, paddingHorizontal: 14, fontSize: 14, paddingVertical: 0 },
+  markBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, height: 34, borderRadius: 17, paddingHorizontal: 12 },
+  simCard: { width: 132, borderRadius: 14, overflow: 'hidden' },
+  simImg: { width: 132, height: 96 },
+  simTitle: { fontSize: 13, lineHeight: 17, fontWeight: '600', padding: 8 },
   noteBox: { marginTop: 18, borderWidth: 1, borderRadius: 14, padding: 12 },
   label: { fontSize: 12, fontWeight: '600', textTransform: 'uppercase', marginBottom: 6, letterSpacing: 0.4 },
   body: { fontSize: 14.5, lineHeight: 21 },

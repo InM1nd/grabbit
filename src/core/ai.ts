@@ -125,7 +125,7 @@ function matchBoard(name: string, boards: string[]): string {
  * over transiently failing models (503 / timeout / bad JSON) before giving up.
  * `timeoutMs` is per request; `budgetMs` caps the whole call.
  */
-export async function analyzePost(input: AiInput, apiKey: string, timeoutMs = 15000, budgetMs = 45000): Promise<AiResult> {
+export async function analyzePost(input: AiInput, apiKey: string, timeoutMs = 12000, budgetMs = 45000): Promise<AiResult> {
   if (!apiKey) throw new AiError('Нет ключа Gemini', false);
   const started = Date.now();
   const prompt = buildPrompt(input);

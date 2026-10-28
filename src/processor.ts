@@ -10,6 +10,7 @@ import { extractInstagram } from './core/igExtract';
 import { igLoaderReady, loadInstagramPage } from './igSession';
 import { getSettings, loadSettings } from './settings';
 import { t } from './i18n';
+import { EmbedError, embedText, embedTexts, packVec, rankByVector } from './core/embed';
 
 const API_KEY: string = (Constants.expoConfig?.extra as any)?.geminiApiKey || '';
 export const hasApiKey = () => !!API_KEY;
@@ -66,6 +67,7 @@ export function processQueue(onlyId?: number): Promise<void> {
         for (const p of todo) await processOne(p);
         if (onlyId) break;
       }
+      await backfillEmbeddings();
     } finally {
       running = null;
     }
@@ -150,6 +152,7 @@ async function processOne(post: db.Post) {
       board_id: cur.boardId ?? boardId,
       status: 'done', last_error: null, attempts: p.attempts + 1,
     });
+    await db.clearEmbedding(p.id); // content changed → (re)embed in backfillEmbeddings()
   } catch (e: any) {
     const retryable = e instanceof AiError ? e.retryable : true;
     const attempts = p.attempts + 1;
@@ -201,4 +204,47 @@ export async function clearThumbCache() {
   try { const dir = thumbsDir(); if (dir.exists) dir.delete(); } catch {}
   const d = await db.getDb();
   await d.runAsync('UPDATE posts SET local_image = NULL');
+}
+
+let embedPausedUntil = 0;
+
+/**
+ * Compute missing embeddings in batches (new posts + existing posts after upgrading to 1.3.0).
+ * Best effort: any failure just pauses the backfill; search falls back to plain text.
+ */
+export async function backfillEmbeddings(maxBatches = 5): Promise<number> {
+  if (!API_KEY || !getSettings().aiEnabled || Date.now() < embedPausedUntil) return 0;
+  let done = 0;
+  for (let b = 0; b < maxBatches; b++) {
+    const todo = await db.postsNeedingEmbedding(32);
+    if (!todo.length) break;
+    const withText = todo.map((p) => ({ p, text: embedText({ ...p, board: p.boardName }) }));
+    for (const x of withText.filter((x) => !x.text)) await db.setEmbedding(x.p.id, '[]'); // nothing to embed; don't retry forever
+    const real = withText.filter((x) => x.text);
+    if (!real.length) continue;
+    try {
+      const vecs = await embedTexts(real.map((x) => x.text), API_KEY, 'RETRIEVAL_DOCUMENT');
+      for (let i = 0; i < real.length; i++) await db.setEmbedding(real[i].p.id, packVec(vecs[i]));
+      done += real.length;
+    } catch (e: any) {
+      embedPausedUntil = Date.now() + (e instanceof EmbedError && e.status === 429 ? 10 * 60_000 : 2 * 60_000);
+      break;
+    }
+  }
+  return done;
+}
+
+/**
+ * Natural-language search over the given posts. Returns null when semantic search isn't
+ * possible (no key, offline, API error, nothing embedded yet) so the caller falls back to text search.
+ */
+export async function semanticSearch(query: string, posts: db.Post[]): Promise<db.Post[] | null> {
+  const q = query.trim();
+  if (!q || !API_KEY || !posts.some((p) => p.embedding?.length)) return null;
+  try {
+    const [vec] = await embedTexts([q], API_KEY, 'RETRIEVAL_QUERY', 8000);
+    return rankByVector(vec, posts, { limit: 60 }).map((x) => x.post);
+  } catch {
+    return null;
+  }
 }
