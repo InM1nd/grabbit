@@ -99,6 +99,8 @@ const styles = StyleSheet.create({
 });
 
 export const MARK_ICON = { try: 'flask-outline', done: 'checkmark-circle', skip: 'moon-outline' } as const;
+export const MARK_GLYPH = { try: 'flask', done: 'checkmark', skip: 'moon' } as const;
+export const MARK_COLOR = { try: '#F59E0B', done: '#16A34A', skip: '#71717A' } as const;
 export function markLabel(m: 'try' | 'done' | 'skip'): string {
   return m === 'try' ? t('Попробовать') : m === 'done' ? t('Сделано') : t('Неважно');
 }

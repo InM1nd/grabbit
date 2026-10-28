@@ -5,7 +5,7 @@ import { Animated, PanResponder, Pressable, StyleSheet, Text, View } from 'react
 import type { Post } from '../db';
 import { PLATFORM_COLOR, PLATFORM_ICON, useColors } from '../theme';
 import { t } from '../i18n';
-import { MARK_ICON } from './common';
+import { MARK_COLOR, MARK_GLYPH } from './common';
 
 /** Rough width/height of a thumbnail by platform — vertical video gets tall cards. */
 export function thumbAspect(p: Post): number {
@@ -56,18 +56,18 @@ function PostCardImpl({ post, width, onPress, onSwipeDelete, onLongPress }: Prop
             <View>
               <Image source={{ uri: img }} style={{ width, height: width / thumbAspect(post), borderRadius: 16, backgroundColor: c.card }} contentFit="cover" transition={120} recyclingKey={String(post.id)} />
               <View style={styles.badge}><Ionicons name={PLATFORM_ICON[post.platform] as any} size={11} color="#fff" /></View>
-              {!post.openedAt && <View style={[styles.dot, { backgroundColor: c.accent }]} />}
-              {!!post.mark && <View style={styles.markBadge}><Ionicons name={MARK_ICON[post.mark] as any} size={12} color="#fff" /></View>}
+              {!post.openedAt && <View style={[styles.dot, { backgroundColor: c.accent }, !!post.mark && { right: 38 }]} />}
+              {!!post.mark && <View style={[styles.statusDot, { backgroundColor: MARK_COLOR[post.mark], borderColor: c.dark ? '#0B0B0D' : '#FFFFFF' }]}><Ionicons name={MARK_GLYPH[post.mark] as any} size={13} color="#fff" /></View>}
               <Text style={[styles.title, { color: c.text }]} numberOfLines={2}>{pending ? t('Разбираю…') : title}</Text>
             </View>
           ) : (
             <View style={[styles.block, { backgroundColor: PLATFORM_COLOR[post.platform] + (c.dark ? '33' : '1F') }]}>
               <View style={{ flexDirection: 'row', gap: 6 }}>
                 <Ionicons name={PLATFORM_ICON[post.platform] as any} size={16} color={c.sub} />
-                {!!post.mark && <Ionicons name={MARK_ICON[post.mark] as any} size={16} color={c.sub} />}
               </View>
               <Text style={[styles.blockTitle, { color: c.text }]} numberOfLines={5}>{pending ? t('Разбираю…') : title}</Text>
-              {!post.openedAt && <View style={[styles.dot, { backgroundColor: c.accent }]} />}
+              {!post.openedAt && <View style={[styles.dot, { backgroundColor: c.accent }, !!post.mark && { right: 38 }]} />}
+              {!!post.mark && <View style={[styles.statusDot, { backgroundColor: MARK_COLOR[post.mark], borderColor: c.dark ? '#0B0B0D' : '#FFFFFF' }]}><Ionicons name={MARK_GLYPH[post.mark] as any} size={13} color="#fff" /></View>}
             </View>
           )}
         </Pressable>
@@ -81,7 +81,7 @@ export const PostCard = memo(PostCardImpl);
 const styles = StyleSheet.create({
   trash: { alignItems: 'flex-end', justifyContent: 'center', paddingRight: 16 },
   badge: { position: 'absolute', top: 8, left: 8, backgroundColor: 'rgba(0,0,0,0.35)', borderRadius: 9, padding: 4 },
-  markBadge: { position: 'absolute', top: 24, right: 6, backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 10, padding: 4 },
+  statusDot: { position: 'absolute', top: 6, right: 6, width: 24, height: 24, borderRadius: 12, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 3, shadowOffset: { width: 0, height: 1 }, elevation: 3 },
   dot: { position: 'absolute', top: 10, right: 10, width: 8, height: 8, borderRadius: 4 },
   title: { fontSize: 14, lineHeight: 19, fontWeight: '600', marginTop: 8, paddingHorizontal: 2 },
   block: { borderRadius: 16, padding: 14, minHeight: 110 },

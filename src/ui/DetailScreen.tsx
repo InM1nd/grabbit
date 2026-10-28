@@ -10,7 +10,7 @@ import { onDataChanged } from '../events';
 import { deleteThumb, reprocess } from '../processor';
 import { useSettings } from '../settings';
 import { PLATFORM_ICON, timeAgo, useColors } from '../theme';
-import { ActionSheet, Chip, IconBtn, MARK_ICON, PromptModal, markLabel } from './common';
+import { ActionSheet, Chip, IconBtn, MARK_COLOR, MARK_GLYPH, MARK_ICON, PromptModal, markLabel } from './common';
 import { similarPosts } from '../core/embed';
 import { cardTitle, thumbAspect } from './PostCard';
 import { t } from '../i18n';
@@ -145,9 +145,9 @@ export function DetailScreen({ postId, boards, onClose, toast, onConnectInstagra
               <View style={[styles.row, { flexWrap: 'wrap', gap: 8, marginTop: 18 }]}>
                 {(['try', 'done', 'skip'] as const).map((m) => (
                   <Pressable key={m} onPress={() => setMark(m)} accessibilityLabel={markLabel(m)}
-                    style={[styles.markBtn, { backgroundColor: post.mark === m ? c.chipActive : c.chip }]}>
-                    <Ionicons name={MARK_ICON[m] as any} size={15} color={post.mark === m ? c.onChipActive : c.sub} />
-                    <Text style={{ fontSize: 13.5, fontWeight: '600', color: post.mark === m ? c.onChipActive : c.text }}>{markLabel(m)}</Text>
+                    style={[styles.markBtn, { borderColor: MARK_COLOR[m], backgroundColor: post.mark === m ? MARK_COLOR[m] : 'transparent' }]}>
+                    <Ionicons name={(post.mark === m ? MARK_GLYPH[m] : MARK_ICON[m]) as any} size={16} color={post.mark === m ? '#fff' : MARK_COLOR[m]} />
+                    <Text style={{ fontSize: 14, fontWeight: '800', color: post.mark === m ? '#fff' : MARK_COLOR[m] }}>{markLabel(m)}</Text>
                   </Pressable>
                 ))}
               </View>
@@ -233,7 +233,7 @@ const styles = StyleSheet.create({
   help: { borderRadius: 16, padding: 14, marginTop: 16 },
   helpText: { fontSize: 14, lineHeight: 20 },
   tagInput: { minWidth: 80, height: 34, borderRadius: 18, paddingHorizontal: 14, fontSize: 14, paddingVertical: 0 },
-  markBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, height: 34, borderRadius: 17, paddingHorizontal: 12 },
+  markBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 38, borderRadius: 19, paddingHorizontal: 14, borderWidth: 2 },
   simCard: { width: 132, borderRadius: 14, overflow: 'hidden' },
   simImg: { width: 132, height: 96 },
   simTitle: { fontSize: 13, lineHeight: 17, fontWeight: '600', padding: 8 },
