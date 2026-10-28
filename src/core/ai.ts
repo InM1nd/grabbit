@@ -2,8 +2,41 @@ import type { AiResult, Metadata } from './types';
 import { PLATFORM_LABEL } from './url';
 
 // 3.5-flash: good quality + reliable on the free tier; the -latest aliases are fallbacks (3.8-flash often 503s under load).
-export const GEMINI_MODELS = ['gemini-3.5-flash', 'gemini-flash-lite-latest', 'gemini-flash-latest'];
+// Order = preference. Benchmarked 2026-10-28 (scripts/ai-bench.mts): gemini-flash-latest timed out 8/10 at 20 s,
+// gemini-3.5-flash hits free-tier 429/503 after a few calls a minute, the flash-lite models answer reliably.
+export const GEMINI_MODELS = ['gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-flash-lite-latest', 'gemini-3.5-flash-lite'];
 const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
+
+/** model -> epoch ms until which it is skipped (429 quota / 404 gone). */
+const cooldown = new Map<string, number>();
+let available: Set<string> | null = null;
+let availableAt = 0;
+
+/** Drop models the key can't use (deprecated/renamed). Cached for 6 h; failures are ignored. */
+async function refreshAvailable(apiKey: string) {
+  if (Date.now() - availableAt < 6 * 3600_000) return;
+  availableAt = Date.now();
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 5000);
+    const r = await fetch(`${ENDPOINT}?pageSize=200`, { headers: { 'x-goog-api-key': apiKey }, signal: ctrl.signal });
+    clearTimeout(t);
+    if (!r.ok) return;
+    const j = await r.json();
+    const names = new Set<string>((j.models || []).map((m: any) => String(m.name).replace(/^models\//, '')));
+    if (GEMINI_MODELS.some((m) => names.has(m))) available = names;
+  } catch {}
+}
+
+function retryDelayMs(txt: string): number {
+  const m = txt.match(/"retryDelay":\s*"(\d+(?:\.\d+)?)s"/);
+  return m ? Math.min(Math.max(Number(m[1]) * 1000, 5000), 10 * 60_000) : 60_000;
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** @internal for tests/benchmarks */
+export function _resetAiState() { cooldown.clear(); available = null; availableAt = 0; }
 
 export class AiError extends Error {
   constructor(message: string, public retryable: boolean, public status?: number) { super(message); }
@@ -86,8 +119,15 @@ function matchBoard(name: string, boards: string[]): string {
   return boards.find((b) => b.toLowerCase() === low) ?? n;
 }
 
-export async function analyzePost(input: AiInput, apiKey: string, timeoutMs = 20000): Promise<AiResult> {
+/**
+ * Robust Gemini call: walks the model chain, skips models on quota cooldown / unavailable,
+ * treats empty or unparseable answers as a failure of that model, and makes a second pass
+ * over transiently failing models (503 / timeout / bad JSON) before giving up.
+ * `timeoutMs` is per request; `budgetMs` caps the whole call.
+ */
+export async function analyzePost(input: AiInput, apiKey: string, timeoutMs = 15000, budgetMs = 45000): Promise<AiResult> {
   if (!apiKey) throw new AiError('Нет ключа Gemini', false);
+  const started = Date.now();
   const prompt = buildPrompt(input);
   const bodyFor = (model: string) => JSON.stringify({
     contents: [{ role: 'user', parts: [
@@ -96,13 +136,22 @@ export async function analyzePost(input: AiInput, apiKey: string, timeoutMs = 20
     ] }],
     generationConfig: {
       responseMimeType: 'application/json', responseSchema: SCHEMA, temperature: 0.4,
+      // Thinking tokens count against the output budget — keep thinking minimal and leave ample room.
+      maxOutputTokens: 4096,
       ...(model.includes('lite') ? {} : { thinkingConfig: { thinkingLevel: 'low' } }),
     },
   });
+  await refreshAvailable(apiKey);
   let lastErr: AiError = new AiError('Gemini недоступен', true);
-  for (const model of GEMINI_MODELS) {
+  let anyAttempt = false;
+  const transient: string[] = [];
+
+  const tryModel = async (model: string): Promise<AiResult | null> => {
+    const left = budgetMs - (Date.now() - started);
+    if (left < 2000) return null;
+    anyAttempt = true;
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    const timer = setTimeout(() => ctrl.abort(), Math.min(timeoutMs, left));
     try {
       const r = await fetch(`${ENDPOINT}/${model}:generateContent`, {
         method: 'POST',
@@ -114,13 +163,30 @@ export async function analyzePost(input: AiInput, apiKey: string, timeoutMs = 20
       if (!r.ok) {
         let msg = `HTTP ${r.status}`;
         try { msg = JSON.parse(txt).error?.message?.slice(0, 200) || msg; } catch {}
-        // 429 quota / 5xx overload: try the next model, and retry later. 400/403 = bad key/request.
+        if (r.status === 429) cooldown.set(model, Date.now() + retryDelayMs(txt));
+        else if (r.status === 404) cooldown.set(model, Date.now() + 24 * 3600_000);
+        else if (r.status >= 500) transient.push(model);
+        // 429 quota / 5xx overload / 404 gone: next model, retry later. 400/403 = bad key/request.
         lastErr = new AiError(msg, r.status === 429 || r.status >= 500 || r.status === 404, r.status);
-        continue;
+        return null;
       }
       const j = JSON.parse(txt);
-      const out = j.candidates?.[0]?.content?.parts?.map((p: any) => p.text || '').join('') || '';
-      const parsed = JSON.parse(out.replace(/^```(?:json)?|```$/g, '').trim());
+      const cand = j.candidates?.[0];
+      const out = cand?.content?.parts?.filter((p: any) => !p.thought).map((p: any) => p.text || '').join('') || '';
+      let parsed: any;
+      try {
+        parsed = JSON.parse(out.replace(/^\s*```(?:json)?|```\s*$/g, '').trim());
+      } catch {
+        transient.push(model);
+        lastErr = new AiError(`Gemini: неполный ответ (${cand?.finishReason || 'пусто'})`, true);
+        return null;
+      }
+      const summary = String(parsed?.summary || '').trim();
+      if (!parsed || typeof parsed !== 'object' || summary.length < 10) {
+        transient.push(model);
+        lastErr = new AiError('Gemini: пустой ответ', true);
+        return null;
+      }
       const tags: string[] = Array.isArray(parsed.tags)
         ? [...new Set<string>(parsed.tags.map((t: any) => String(t).toLowerCase().replace(/^#/, '').trim()).filter(Boolean))].slice(0, 6)
         : [];
@@ -129,18 +195,42 @@ export async function analyzePost(input: AiInput, apiKey: string, timeoutMs = 20
       if (opaque) { parsed.board = 'Разное'; parsed.boardEmoji = '🗂️'; }
       return {
         title: parsed.title ? String(parsed.title).trim().slice(0, 90) : undefined,
-        summary: String(parsed.summary || '').trim(),
+        summary,
         tags,
         board: matchBoard(String(parsed.board || 'Разное'), input.boards) || 'Разное',
         boardEmoji: parsed.boardEmoji ? String(parsed.boardEmoji).trim().slice(0, 4) : undefined,
         model: j.modelVersion || model,
       };
     } catch (e: any) {
-      // network error / timeout / malformed JSON → retry later
+      // network error / timeout → retry later
+      transient.push(model);
       lastErr = e instanceof AiError ? e : new AiError(e?.name === 'AbortError' ? 'Таймаут Gemini' : String(e?.message || e), true);
+      return null;
     } finally {
       clearTimeout(timer);
     }
+  };
+
+  const usable = (m: string) => (!available || available.has(m)) && (cooldown.get(m) ?? 0) <= Date.now();
+  for (const model of GEMINI_MODELS.filter(usable)) {
+    const res = await tryModel(model);
+    if (res) return res;
+  }
+  // Second pass: overloaded / timed-out / garbled models often succeed a moment later.
+  const again = [...new Set(transient)].filter(usable);
+  if (again.length) {
+    await sleep(1500);
+    for (const model of again) {
+      const res = await tryModel(model);
+      if (res) return res;
+    }
+  }
+  if (!anyAttempt) {
+    // Everything on cooldown: try the model whose cooldown ends first rather than failing outright.
+    const soonest = [...GEMINI_MODELS].sort((a, b) => (cooldown.get(a) ?? 0) - (cooldown.get(b) ?? 0))[0];
+    const res = await tryModel(soonest);
+    if (res) return res;
   }
   throw lastErr;
 }
+
