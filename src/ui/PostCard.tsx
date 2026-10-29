@@ -54,7 +54,7 @@ function PostCardImpl({ post, width, onPress, onSwipeDelete, onLongPress }: Prop
         <Pressable onPress={() => onPress(post)} onLongPress={onLongPress ? () => onLongPress(post) : undefined} delayLongPress={350} style={({ pressed }) => ({ width, opacity: pressed ? 0.8 : 1 })}>
           {img ? (
             <View>
-              <Image source={{ uri: img }} style={{ width, height: width / thumbAspect(post), borderRadius: 16, backgroundColor: c.card }} contentFit="cover" transition={120} recyclingKey={String(post.id)} />
+              <Image source={{ uri: img }} style={{ width, height: width / thumbAspect(post), borderRadius: 16, backgroundColor: c.card }} contentFit="cover" cachePolicy="memory-disk" transition={0} recyclingKey={String(post.id)} />
               <View style={styles.badge}><Ionicons name={PLATFORM_ICON[post.platform] as any} size={11} color="#fff" /></View>
               {!post.openedAt && <View style={[styles.dot, { backgroundColor: c.accent }, !!post.mark && { right: 38 }]} />}
               {!!post.mark && <View style={[styles.statusDot, { backgroundColor: MARK_COLOR[post.mark], borderColor: c.dark ? '#0B0B0D' : '#FFFFFF' }]}><Ionicons name={MARK_GLYPH[post.mark] as any} size={13} color="#fff" /></View>}

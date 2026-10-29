@@ -98,6 +98,17 @@ export function getDb(): Promise<SQLite.SQLiteDatabase> {
   return dbPromise;
 }
 
+// Parsed-embedding cache: avoids JSON.parse of every vector on every feed reload.
+const vecCache = new Map<number, { raw: string; vec: number[] | null }>();
+function cachedVec(id: number, raw: string | null): number[] | null {
+  if (!raw) { vecCache.delete(id); return null; }
+  const hit = vecCache.get(id);
+  if (hit && hit.raw === raw) return hit.vec;
+  const vec = unpackVec(raw);
+  vecCache.set(id, { raw, vec });
+  return vec;
+}
+
 function rowToPost(r: any): Post {
   let tags: string[] = [];
   try { tags = JSON.parse(r.tags || '[]'); } catch {}
@@ -109,7 +120,7 @@ function rowToPost(r: any): Post {
     status: r.status, attempts: r.attempts, nextTryAt: r.next_try_at, lastError: r.last_error,
     createdAt: r.created_at, openedAt: r.opened_at, remindedAt: r.reminded_at,
     mark: r.mark === 'try' || r.mark === 'done' || r.mark === 'skip' ? r.mark : null,
-    embedding: r.embed_model === EMBED_MODEL ? unpackVec(r.embedding) : null,
+    embedding: r.embed_model === EMBED_MODEL ? cachedVec(r.id, r.embedding) : null,
   };
 }
 

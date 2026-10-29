@@ -54,6 +54,9 @@ export function deleteThumb(id: number) {
 
 let running: Promise<void> | null = null;
 
+/** Yield to the UI: wait until animations/gestures settle so background work never competes with a scroll. */
+const idle = () => new Promise<void>((r) => { try { require('react-native').InteractionManager.runAfterInteractions(() => setTimeout(r, 16)); } catch { r(); } });
+
 /** Process every pending post (metadata → thumbnail → Gemini). Safe to call often. */
 export function processQueue(onlyId?: number): Promise<void> {
   if (running) return running.then(() => (onlyId ? processQueue(onlyId) : undefined));
@@ -64,9 +67,10 @@ export function processQueue(onlyId?: number): Promise<void> {
         const list = await db.pendingPosts();
         const todo = onlyId ? list.filter((p) => p.id === onlyId) : list;
         if (!todo.length) break;
-        for (const p of todo) await processOne(p);
+        for (const p of todo) { await idle(); await processOne(p); }
         if (onlyId) break;
       }
+      await idle();
       await backfillEmbeddings();
     } finally {
       running = null;

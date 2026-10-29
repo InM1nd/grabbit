@@ -108,7 +108,7 @@ function Main() {
       }
     }
     setSemActive(sem);
-    setPosts(p);
+    setPosts((prev) => reuseUnchanged(prev, p));
     setBoards(b);
     setUnsorted(all.filter((x) => x.boardId == null).length);
     setPending(n);
@@ -116,7 +116,7 @@ function Main() {
   useEffect(() => { reload(); }, [reload]);
   useEffect(() => {
     let t: ReturnType<typeof setTimeout> | null = null;
-    const off = onDataChanged(() => { if (t) clearTimeout(t); t = setTimeout(reload, 120); });
+    const off = onDataChanged(() => { if (t) clearTimeout(t); t = setTimeout(reload, 250); });
     return () => { off(); if (t) clearTimeout(t); };
   }, [reload]);
 
@@ -223,7 +223,8 @@ function Main() {
     } else if (mode === 'logout') toast(loggedIn ? t('Не удалось выйти') : t('Вышел из Instagram'));
   };
 
-  const visiblePosts = hidden.size ? posts.filter((p) => !hidden.has(p.id)) : posts;
+  const openPost = useCallback((p: db.Post) => setDetailId(p.id), []);
+  const visiblePosts = React.useMemo(() => (hidden.size ? posts.filter((p) => !hidden.has(p.id)) : posts), [posts, hidden]);
   const currentBoard = boards.find((b) => b.id === boardId);
 
   return (
@@ -255,7 +256,7 @@ function Main() {
         {tab === 'feed' ? (
           <FeedScreen posts={visiblePosts} boards={boards} boardId={boardId} setBoardId={setBoardId} query={debQuery} semantic={semActive}
             markFilter={markFilter} setMarkFilter={setMarkFilter} onLongPress={setMarkPost}
-            onOpen={(p) => setDetailId(p.id)} onSwipeDelete={swipeDelete}
+            onOpen={openPost} onSwipeDelete={swipeDelete}
             onRefresh={async () => { setRefreshing(true); await retryAllNow(); await reload(); setRefreshing(false); }} refreshing={refreshing} />
         ) : (
           <BoardsScreen boards={boards} unsortedCount={unsorted} onOpenBoard={(id) => { setBoardId(id); setTab('feed'); }} />
@@ -326,3 +327,17 @@ const styles = StyleSheet.create({
   toastText: { fontSize: 14.5, fontWeight: '500' },
   toastAction: { fontSize: 14.5, fontWeight: '700' },
 });
+
+/** Keep previous object identity for unchanged posts so memoized cards don't re-render on every reload. */
+function reuseUnchanged(prev: db.Post[], next: db.Post[]): db.Post[] {
+  const old = new Map(prev.map((x) => [x.id, x]));
+  let same = prev.length === next.length;
+  const out = next.map((n, i) => {
+    const o = old.get(n.id);
+    const keep = o && (Object.keys(n) as (keyof db.Post)[]).every((k) => k === 'tags' ? o.tags.join('\u0001') === n.tags.join('\u0001') : o[k] === n[k]);
+    const r = keep ? o! : n;
+    if (r !== prev[i]) same = false;
+    return r;
+  });
+  return same ? prev : out;
+}
