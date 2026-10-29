@@ -1,5 +1,6 @@
 // Tiny i18n: Russian source strings are the keys; EN/UK translations below.
 import { getLocales } from 'expo-localization';
+import { setUiLang } from './core/uiLang';
 
 export type Lang = 'ru' | 'en' | 'uk';
 let lang: Lang = 'ru';
@@ -270,7 +271,7 @@ for (const [ru, en, uk] of T) { DICT.en.set(ru, en); DICT.uk.set(ru, uk); }
 
 export const I18N_TABLE = T; // for tests
 
-export function setLang(l: Lang) { lang = l; }
+export function setLang(l: Lang) { lang = l; setUiLang(l); }
 export function getLang(): Lang { return lang; }
 
 export function systemLang(): Lang {

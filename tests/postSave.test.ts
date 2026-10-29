@@ -41,3 +41,24 @@ test('incoming share callers can still omit note and board', { skip: !sqlite }, 
   assert.equal(post.boardId, null);
   assert.equal(post.rawText, 'Shared caption');
 });
+
+test('default boards: one board across languages, localized names, rename makes it custom', { skip: !sqlite }, async () => {
+  const { setUiLang } = require('./src/core/uiLang.ts');
+  await db.getDb();
+  setUiLang('ru');
+  const a = await db.getOrCreateBoard('Разное');
+  const b = await db.getOrCreateBoard('Misc');
+  assert.equal(a, b);
+  assert.equal(sqlite.prepare('SELECT key FROM boards WHERE id = ?').get(a).key, 'misc');
+  setUiLang('en');
+  assert.equal((await db.listBoards()).find((x) => x.id === a).name, 'Misc');
+  assert.ok((await db.boardNames()).includes('Misc'));
+  setUiLang('uk');
+  assert.equal((await db.listBoards()).find((x) => x.id === a).name, 'Різне');
+  const custom = await db.getOrCreateBoard('Мои рецепты');
+  assert.equal((await db.listBoards()).find((x) => x.id === custom).name, 'Мои рецепты');
+  await db.renameBoard(a, 'Всяке');
+  const row = sqlite.prepare('SELECT name, key FROM boards WHERE id = ?').get(a);
+  assert.deepEqual({ ...row }, { name: 'Всяке', key: null });
+  setUiLang('ru');
+});

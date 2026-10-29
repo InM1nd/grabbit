@@ -1,3 +1,5 @@
+import { DEFAULT_BOARDS, boardDisplayName, defaultBoardKey, miscName } from './core/boards';
+import { getUiLang as getLang } from './core/uiLang';
 import * as SQLite from 'expo-sqlite';
 import type { Platform } from './core/types';
 import { emitDataChanged } from './events';
@@ -44,6 +46,8 @@ export interface Board {
   id: number;
   name: string;
   emoji: string | null;
+  /** Stable id of a built-in board (name is then localized); null for the user's own boards. */
+  key?: string | null;
   createdAt: number;
   count: number;
   covers: string[];
@@ -94,6 +98,12 @@ export function getDb(): Promise<SQLite.SQLiteDatabase> {
       if (!cols.includes('embedding')) await db.execAsync('ALTER TABLE posts ADD COLUMN embedding TEXT');
       if (!cols.includes('embed_model')) await db.execAsync('ALTER TABLE posts ADD COLUMN embed_model TEXT');
       // v4 (1.7.0): user-attached screenshot → always show it to the AI
+      // v5 (1.8.0): default boards get a stable key and are shown in the UI language
+      const bcols = (await db.getAllAsync<{ name: string }>('PRAGMA table_info(boards)')).map((c) => c.name);
+      if (!bcols.includes('key')) {
+        await db.execAsync('ALTER TABLE boards ADD COLUMN key TEXT');
+        for (const [k, v] of Object.entries(DEFAULT_BOARDS)) await db.runAsync('UPDATE boards SET key = ? WHERE key IS NULL AND name = ? COLLATE NOCASE', k, v.ru);
+      }
       if (!cols.includes('shot')) await db.execAsync('ALTER TABLE posts ADD COLUMN shot INTEGER NOT NULL DEFAULT 0');
       await db.execAsync('PRAGMA foreign_keys = ON;');
       return db;
@@ -165,11 +175,11 @@ export async function listPosts(opts: { boardId?: number | null; query?: string;
   if (opts.boardId != null) { where.push('p.board_id = ?'); params.push(opts.boardId); }
   const q = (opts.query || '').trim().toLowerCase();
   const rows = await db.getAllAsync(
-    `SELECT p.*, b.name AS board_name FROM posts p LEFT JOIN boards b ON b.id = p.board_id
+    `SELECT p.*, b.name AS board_name, b.key AS board_key FROM posts p LEFT JOIN boards b ON b.id = p.board_id
      ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY p.created_at DESC`,
     ...params,
   );
-  let posts = rows.map((r: any) => ({ post: rowToPost(r), board: (r.board_name as string) || '' }));
+  let posts = rows.map((r: any) => ({ post: rowToPost(r), board: r.board_name ? boardDisplayName(r.board_name, r.board_key, getLang()) : '' }));
   if (q) {
     // SQLite LOWER() only folds ASCII, so filter in JS to handle Cyrillic properly.
     const terms = q.split(/\s+/).filter(Boolean);
@@ -223,24 +233,27 @@ export async function listBoards(): Promise<Board[]> {
     if (arr.length < 3) arr.push(c.img);
     byBoard.set(c.board_id, arr);
   }
-  return rows.map((r) => ({ id: r.id, name: r.name, emoji: r.emoji, createdAt: r.created_at, count: r.cnt, covers: byBoard.get(r.id) || [] }));
+  return rows.map((r) => ({ id: r.id, name: boardDisplayName(r.name, r.key, getLang()), key: r.key ?? null, emoji: r.emoji, createdAt: r.created_at, count: r.cnt, covers: byBoard.get(r.id) || [] }));
 }
 
 export async function boardNames(): Promise<string[]> {
   const db = await getDb();
-  const rows = await db.getAllAsync<{ name: string }>('SELECT name FROM boards ORDER BY name');
-  return rows.map((r) => r.name);
+  const rows = await db.getAllAsync<{ name: string; key: string | null }>('SELECT name, key FROM boards ORDER BY name');
+  return rows.map((r) => boardDisplayName(r.name, r.key, getLang()));
 }
 
 export async function getOrCreateBoard(name: string, emoji?: string | null): Promise<number> {
   const db = await getDb();
-  const clean = name.trim().slice(0, 40) || 'Разное';
-  const ex = await db.getFirstAsync<{ id: number; emoji: string | null }>('SELECT id, emoji FROM boards WHERE name = ?', clean);
+  const clean = name.trim().slice(0, 40) || miscName(getLang());
+  // Default boards are matched by key in any language, so "Misc" and "Разное" are one board.
+  const key = defaultBoardKey(clean);
+  const ex = (key ? await db.getFirstAsync<{ id: number; emoji: string | null }>('SELECT id, emoji FROM boards WHERE key = ?', key) : null)
+    ?? await db.getFirstAsync<{ id: number; emoji: string | null }>('SELECT id, emoji FROM boards WHERE name = ?', key ? DEFAULT_BOARDS[key].ru : clean);
   if (ex) {
     if (!ex.emoji && emoji) await db.runAsync('UPDATE boards SET emoji = ? WHERE id = ?', emoji, ex.id);
     return ex.id;
   }
-  const r = await db.runAsync('INSERT INTO boards (name, emoji, created_at) VALUES (?, ?, ?)', clean, emoji ?? null, Date.now());
+  const r = await db.runAsync('INSERT INTO boards (name, emoji, created_at, key) VALUES (?, ?, ?, ?)', key ? DEFAULT_BOARDS[key].ru : clean, emoji ?? (key ? DEFAULT_BOARDS[key].emoji : null), Date.now(), key);
   emitDataChanged();
   return Number(r.lastInsertRowId);
 }
@@ -249,13 +262,19 @@ export async function renameBoard(id: number, name: string, emoji?: string | nul
   const db = await getDb();
   const clean = name.trim().slice(0, 40);
   if (!clean) return;
-  const other = await db.getFirstAsync<{ id: number }>('SELECT id FROM boards WHERE name = ? AND id != ?', clean, id);
+  const dk = defaultBoardKey(clean);
+  const other = (dk ? await db.getFirstAsync<{ id: number }>('SELECT id FROM boards WHERE key = ? AND id != ?', dk, id) : null)
+    ?? await db.getFirstAsync<{ id: number }>('SELECT id FROM boards WHERE name = ? AND id != ?', clean, id);
   if (other) {
     // merging into an existing board
     await db.runAsync('UPDATE posts SET board_id = ? WHERE board_id = ?', other.id, id);
     await db.runAsync('DELETE FROM boards WHERE id = ?', id);
   } else {
-    await db.runAsync('UPDATE boards SET name = ?, emoji = COALESCE(?, emoji) WHERE id = ?', clean, emoji ?? null, id);
+    // A renamed board becomes the user's own: drop the key unless the name is unchanged.
+    const cur = await db.getFirstAsync<{ name: string; key: string | null }>('SELECT name, key FROM boards WHERE id = ?', id);
+    const same = cur?.key && boardDisplayName(cur.name, cur.key, getLang()) === clean;
+    if (same) await db.runAsync('UPDATE boards SET emoji = COALESCE(?, emoji) WHERE id = ?', emoji ?? null, id);
+    else await db.runAsync('UPDATE boards SET name = ?, key = NULL, emoji = COALESCE(?, emoji) WHERE id = ?', clean, emoji ?? null, id);
   }
   emitDataChanged();
 }
@@ -305,11 +324,11 @@ export async function unopenedPosts(): Promise<Post[]> {
 export async function postsNeedingEmbedding(limit = 32): Promise<(Post & { boardName: string })[]> {
   const db = await getDb();
   const rows = await db.getAllAsync(
-    `SELECT p.*, b.name AS board_name FROM posts p LEFT JOIN boards b ON b.id = p.board_id
+    `SELECT p.*, b.name AS board_name, b.key AS board_key FROM posts p LEFT JOIN boards b ON b.id = p.board_id
      WHERE p.status = 'done' AND (p.embedding IS NULL OR p.embed_model IS NULL OR p.embed_model != ?)
      ORDER BY p.created_at DESC LIMIT ?`, EMBED_MODEL, limit,
   );
-  return rows.map((r: any) => ({ ...rowToPost(r), boardName: r.board_name || '' }));
+  return rows.map((r: any) => ({ ...rowToPost(r), boardName: r.board_name ? boardDisplayName(r.board_name, r.board_key, getLang()) : '' }));
 }
 
 export async function setEmbedding(id: number, packed: string | null) {

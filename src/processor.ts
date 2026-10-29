@@ -8,7 +8,7 @@ import * as db from './db';
 import { extractInstagram } from './core/igExtract';
 import { igLoaderReady, loadInstagramPage } from './igSession';
 import { getSettings, loadSettings } from './settings';
-import { t } from './i18n';
+import { getLang, t } from './i18n';
 import { EmbedError, embedText, embedTexts, packVec, rankByVector } from './core/embed';
 
 import { aiMode, getGeminiAuth } from './aiAuth';
@@ -154,7 +154,7 @@ async function processOne(post: db.Post) {
     if (p.localImage && (p.shot || (st.aiVision && isWeakText(meta, sharedText, note)))) {
       try { const data = await new File(p.localImage).base64(); image = { mimeType: sniffMime(data), data }; } catch {}
     }
-    const ai = await analyzePost({ meta, sharedText, boards, image, note, lang: st.aiLang }, auth);
+    const ai = await analyzePost({ meta, sharedText, boards, image, note, lang: st.aiLang, boardLang: getLang() }, auth);
     const defaultBoard = st.defaultBoardId != null && (await db.listBoards()).some((b) => b.id === st.defaultBoardId) ? st.defaultBoardId : null;
     const boardId = defaultBoard ?? (await db.getOrCreateBoard(ai.board, ai.boardEmoji));
     const cur = await db.getPost(p.id);

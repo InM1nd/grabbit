@@ -1,3 +1,4 @@
+import { DEFAULT_BOARDS, miscName, type BoardLang } from './boards';
 import type { AiResult, Metadata } from './types';
 import { PLATFORM_LABEL } from './url';
 import { canUseGemini, geminiTarget, proxyLimitInfo, type GeminiAuth } from './gemini';
@@ -52,10 +53,13 @@ export interface AiInput {
   image?: { mimeType: string; data: string };
   /** Free-text note the user typed about the post. */
   note?: string;
-  /** Language of title/summary/tags: Russian (default), English, or the post's own language. Boards stay Russian. */
+  /** Language of title/summary/tags: Russian (default), English, or the post's own language. */
   lang?: 'ru' | 'en' | 'orig';
+  /** UI language: names of new boards are written in it. */
+  boardLang?: BoardLang;
 }
 
+const BOARD_LANG_PHRASE = { ru: 'на русском', en: 'на английском (in English)', uk: 'на украинском (українською)' } as const;
 const LANG_PHRASE = { ru: 'на русском', en: 'на английском (in English)', orig: 'на языке оригинала поста' } as const;
 
 /** Guess image mime type from base64 magic bytes. */
@@ -86,8 +90,11 @@ const SCHEMA = {
   required: ['title', 'summary', 'tags', 'board'],
 };
 
-export function buildPrompt({ meta, sharedText, boards, image, note, lang = 'ru' }: AiInput): string {
+export function buildPrompt({ meta, sharedText, boards, image, note, lang = 'ru', boardLang = 'ru' }: AiInput): string {
   const L = LANG_PHRASE[lang];
+  const BL = BOARD_LANG_PHRASE[boardLang];
+  const examples = Object.entries(DEFAULT_BOARDS).filter(([k]) => k !== 'misc').map(([, v]) => `"${v[boardLang]}"`).join(', ');
+  const misc = miscName(boardLang);
   const lines = [
     'Ты помогаешь вести личный органайзер сохранённых постов из соцсетей (как Pinterest).',
     'Пользователь в основном сохраняет посты про технологии: ИИ-инструменты, программирование, гаджеты, дизайн, стартапы, но может быть что угодно.',
@@ -95,8 +102,8 @@ export function buildPrompt({ meta, sharedText, boards, image, note, lang = 'ru'
     `1) title — короткий понятный заголовок ${L} (до 60 символов), без кликбейта;`,
     `2) summary — 1–3 предложения ${L}: о чём пост и что из него можно взять. Если данных мало, честно опиши, что известно (платформа, автор), не выдумывай детали;`,
     `3) tags — 3–6 коротких тегов строчными буквами ${L} (названия продуктов/технологий можно латиницей, например "chatgpt", "react");`,
-    '4) board — тематическая доска. ОБЯЗАТЕЛЬНО выбери одну из существующих досок, если пост к ней подходит по смыслу (верни её название точно как в списке). Новую доску создавай только если ни одна не подходит: 1–3 слова на русском, широкая тема (например "ИИ-инструменты", "Программирование", "Гаджеты", "Дизайн и UI", "Продуктивность"), а не узкая под один пост;',
-    '   Не притягивай пост к существующей доске по формальному признаку (платформа, «интернет») — доска должна отражать тему содержания. Если о содержании почти ничего не известно, выбери доску "Разное".',
+    `4) board — тематическая доска. ОБЯЗАТЕЛЬНО выбери одну из существующих досок, если пост к ней подходит по смыслу (верни её название точно как в списке). Новую доску создавай только если ни одна не подходит: 1–3 слова ${BL}, широкая тема (например ${examples}), а не узкая под один пост;`,
+    `   Не притягивай пост к существующей доске по формальному признаку (платформа, «интернет») — доска должна отражать тему содержания. Если о содержании почти ничего не известно, выбери доску "${misc}".`,
     '5) boardEmoji — один эмодзи для доски.',
     '',
     `Существующие доски: ${boards.length ? boards.map((b) => `"${b}"`).join(', ') : '(пока нет)'}`,
@@ -197,12 +204,12 @@ export async function analyzePost(input: AiInput, auth: GeminiAuth, timeoutMs = 
         : [];
       // Opaque links (IG/TikTok/X ids) with no metadata: don't let the model guess a topic board.
       const opaque = input.meta.blocked && !input.sharedText && !input.note && !input.image && ['instagram', 'tiktok', 'x', 'threads', 'facebook'].includes(input.meta.platform);
-      if (opaque) { parsed.board = 'Разное'; parsed.boardEmoji = '🗂️'; }
+      if (opaque) { parsed.board = miscName(input.boardLang ?? 'ru'); parsed.boardEmoji = '🗂️'; }
       return {
         title: parsed.title ? String(parsed.title).trim().slice(0, 90) : undefined,
         summary,
         tags,
-        board: matchBoard(String(parsed.board || 'Разное'), input.boards) || 'Разное',
+        board: matchBoard(String(parsed.board || miscName(input.boardLang ?? 'ru')), input.boards) || miscName(input.boardLang ?? 'ru'),
         boardEmoji: parsed.boardEmoji ? String(parsed.boardEmoji).trim().slice(0, 4) : undefined,
         model: j.modelVersion || model,
       };
