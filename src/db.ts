@@ -130,11 +130,11 @@ export async function findPostByUrl(url: string): Promise<Post | null> {
   return r ? rowToPost(r) : null;
 }
 
-export async function insertPost(p: { url: string; rawText: string | null; platform: Platform; title?: string | null }): Promise<number> {
+export async function insertPost(p: { url: string; rawText: string | null; platform: Platform; title?: string | null; note?: string | null; boardId?: number | null }): Promise<number> {
   const db = await getDb();
   const res = await db.runAsync(
-    'INSERT INTO posts (url, raw_text, platform, title, created_at) VALUES (?, ?, ?, ?, ?)',
-    p.url, p.rawText, p.platform, p.title ?? null, Date.now(),
+    'INSERT INTO posts (url, raw_text, platform, title, note, board_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    p.url, p.rawText, p.platform, p.title ?? null, p.note ?? null, p.boardId ?? null, Date.now(),
   );
   emitDataChanged();
   return Number(res.lastInsertRowId);

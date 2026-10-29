@@ -11,14 +11,14 @@ const config: ExpoConfig = {
   name: 'Grabbit',
   slug: 'polka',
   scheme: 'pinbox',
-  version: '1.4.3',
+  version: '1.5.0',
   orientation: 'portrait',
   icon: './assets/icon.png',
   userInterfaceStyle: 'automatic',
   backgroundColor: '#FFFFFF',
   android: {
     package: 'com.zabolotny.polka',
-    versionCode: 11,
+    versionCode: 12,
     adaptiveIcon: {
       backgroundColor: '#F8483E',
       foregroundImage: './assets/android-icon-foreground.png',

@@ -18,14 +18,14 @@ export const hasApiKey = () => !!API_KEY;
 export type SaveResult = { status: 'saved' | 'duplicate'; id: number } | { status: 'no-url' };
 
 /** Save a shared link immediately (no network). AI/metadata happen in processQueue(). */
-export async function saveShared(text: string | null | undefined, webUrl?: string | null, subject?: string | null): Promise<SaveResult> {
+export async function saveShared(text: string | null | undefined, webUrl?: string | null, subject?: string | null, initial?: { note?: string | null; boardId?: number | null }): Promise<SaveResult> {
   const url = webUrl || extractUrl(text) || extractUrl(subject);
   if (!url) return { status: 'no-url' };
   const norm = normalizeUrl(url);
   const existing = await db.findPostByUrl(norm);
   if (existing) return { status: 'duplicate', id: existing.id };
   const extra = [subject && !subject.includes(url) ? subject : '', extraText(text, url)].filter(Boolean).join(' — ');
-  const id = await db.insertPost({ url: norm, rawText: extra || null, platform: detectPlatform(norm) });
+  const id = await db.insertPost({ url: norm, rawText: extra || null, platform: detectPlatform(norm), note: initial?.note, boardId: initial?.boardId });
   return { status: 'saved', id };
 }
 

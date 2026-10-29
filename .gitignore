@@ -52,3 +52,6 @@ keystore/*
 *.keystore
 build/
 build-logs/
+
+# Local assistant project metadata
+.serena/

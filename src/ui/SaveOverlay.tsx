@@ -48,15 +48,15 @@ export function SaveOverlay({ state, delaySec, onDone, onOpen }: Props) {
   const text = state.kind === 'no-url' ? t('В сообщении нет ссылки') : state.kind === 'duplicate' ? t('Уже сохранено') : t('Сохранено');
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-      <Animated.View style={[styles.pill, { bottom: 24 + insets.bottom, backgroundColor: c.text, transform: [{ translateY: y }] }]}>
-        <Ionicons name={state.kind === 'no-url' ? 'alert-circle' : 'checkmark-circle'} size={20} color={state.kind === 'no-url' ? c.warn : c.ok} />
-        <Text style={[styles.text, { color: c.bg }]} numberOfLines={1}>
+      <Animated.View style={[styles.pill, { bottom: 104 + insets.bottom, backgroundColor: c.elevated, borderColor: c.line, transform: [{ translateY: y }] }]}>
+        <Ionicons name={state.kind === 'no-url' ? 'alert-circle' : 'checkmark-circle'} size={20} color={state.kind === 'no-url' ? c.warn : c.accent} />
+        <Text style={[styles.text, { color: c.text }]} numberOfLines={1}>
           {text}{label ? ` → ${label}` : ''}
         </Text>
         {state.kind !== 'no-url' && pending && !label && <ActivityIndicator size="small" color={c.bg} style={{ marginLeft: 6 }} />}
         {state.kind !== 'no-url' && (
           <Pressable onPress={() => onOpen(state.id)} hitSlop={10} style={{ marginLeft: 'auto', paddingLeft: 12 }}>
-            <Text style={[styles.link, { color: c.bg }]}>{t('Изменить')}</Text>
+            <Text style={[styles.link, { color: c.text }]}>{t('Изменить')}</Text>
           </Pressable>
         )}
       </Animated.View>
@@ -65,7 +65,7 @@ export function SaveOverlay({ state, delaySec, onDone, onOpen }: Props) {
 }
 
 const styles = StyleSheet.create({
-  pill: { position: 'absolute', left: 16, right: 16, flexDirection: 'row', alignItems: 'center', borderRadius: 26, paddingHorizontal: 16, height: 52, elevation: 8, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 12 },
+  pill: { position: 'absolute', left: 16, right: 16, flexDirection: 'row', alignItems: 'center', borderRadius: 20, borderWidth: 1, paddingHorizontal: 16, height: 52, elevation: 8, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 12 },
   text: { marginLeft: 10, fontSize: 15, fontWeight: '600', flexShrink: 1 },
   link: { fontSize: 14.5, fontWeight: '600', textDecorationLine: 'underline', opacity: 0.85 },
 });

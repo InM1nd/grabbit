@@ -5,6 +5,9 @@ import * as Clipboard from 'expo-clipboard';
 import * as Notifications from 'expo-notifications';
 import { useShareIntent } from 'expo-share-intent';
 import { StatusBar } from 'expo-status-bar';
+import { Image } from 'expo-image';
+import { BottomNav } from './src/ui/BottomNav';
+import { AddPostPanel, type NewPost } from './src/ui/PostExperience';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, AppState, BackHandler, Pressable, StyleSheet, Text, TextInput, View, useColorScheme } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -16,7 +19,7 @@ import { ensurePermission, rescheduleReminder, setupNotifications } from './src/
 import { updateSettings, useSettings } from './src/settings';
 import { DARK, LIGHT, ThemeContext, useColors } from './src/theme';
 import { BoardsScreen } from './src/ui/BoardsScreen';
-import { ActionSheet, IconBtn, MARK_ICON, PromptModal, markLabel } from './src/ui/common';
+import { ActionSheet, IconBtn, MARK_ICON, markLabel } from './src/ui/common';
 import { DetailScreen } from './src/ui/DetailScreen';
 import { FeedScreen } from './src/ui/FeedScreen';
 import { HiddenInstagramLoader, InstagramLoginModal } from './src/ui/InstagramWeb';
@@ -77,7 +80,7 @@ function Main() {
 
   // ---------- toast (with optional action, e.g. undo) ----------
   const [toastState, setToastState] = useState<Toast>(null);
-  const toastA = useRef(new Animated.Value(0)).current;
+  const [toastA] = useState(() => new Animated.Value(0));
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showToast = useCallback((t: Toast, ms = 2200) => {
     if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -114,7 +117,7 @@ function Main() {
     setUnsorted(all.filter((x) => x.boardId == null).length);
     setPending(n);
   }, [boardId, debQuery, semantic, markFilter, toast]);
-  useEffect(() => { reload(); }, [reload]);
+  useEffect(() => { const timer = setTimeout(() => { void reload(); }, 0); return () => clearTimeout(timer); }, [reload]);
   useEffect(() => {
     let t: ReturnType<typeof setTimeout> | null = null;
     const off = onDataChanged(() => { if (t) clearTimeout(t); t = setTimeout(reload, 250); });
@@ -155,7 +158,7 @@ function Main() {
     resetShareIntent();
     (async () => {
       fromShare.current = true;
-      setDetailId(null); setSettingsOpen(false);
+      setDetailId(null); setSettingsOpen(false); setAdding(null);
       const r = await saveShared(si.text, si.webUrl, si.meta?.title ?? null);
       if (r.status === 'no-url') { setSaveState({ kind: 'no-url' }); return; }
       setSaveState({ kind: r.status === 'duplicate' ? 'duplicate' : 'saved', id: r.id });
@@ -204,14 +207,16 @@ function Main() {
     try { clip = extractUrl(await Clipboard.getStringAsync()) || ''; } catch {}
     setAdding(clip);
   };
-  const addLink = async (text: string) => {
-    setAdding(null);
-    const r = await saveShared(text, null, null);
-    if (r.status === 'no-url') { toast(t('Это не похоже на ссылку')); return; }
-    if (r.status === 'duplicate') { toast(t('Уже сохранено')); setDetailId(r.id); return; }
-    toast(t('Сохранено — ИИ разбирает'));
-    processQueue(r.id).then(rescheduleReminder);
+  const addLink = async (input: NewPost): Promise<db.Post> => {
+    const r = await saveShared(input.url, null, null, { note: input.note || null, boardId: input.boardId });
+    if (r.status === 'no-url') throw new Error(t('Это не похоже на ссылку'));
+    if (r.status === 'duplicate') throw new Error(t('Уже сохранено'));
+    const post = await db.getPost(r.id);
+    if (!post) throw new Error(t('Не удалось сохранить. Попробуй ещё раз.'));
+    setTab('feed'); setBoardId(null); setQuery(''); setMarkFilter('default');
+    processQueue(r.id).then(rescheduleReminder).catch(() => {});
     ensurePermission().catch(() => {});
+    return post;
   };
 
   const onIgResult = async (loggedIn: boolean, userId: string | null) => {
@@ -231,27 +236,18 @@ function Main() {
   return (
     <View style={[styles.root, { paddingTop: insets.top, backgroundColor: c.bg }]}>
       <View style={styles.header}>
-        {searching && tab === 'feed' ? (
-          <View style={[styles.search, { backgroundColor: c.card }]}>
-            <Ionicons name="search" size={18} color={c.faint} />
-            <TextInput value={query} onChangeText={setQuery} autoFocus placeholder={semantic ? t('Спроси: «как монтировать видео»') : t('Поиск: слово, тег, автор')} placeholderTextColor={c.faint}
-              style={[styles.searchInput, { color: c.text }]} returnKeyType="search" />
-            <Pressable onPress={() => { offlineWarned.current = false; setSemantic(!semantic); }} hitSlop={6} accessibilityLabel={t('по смыслу')}
-              style={[styles.semBtn, { backgroundColor: semantic ? c.chipActive : c.chip }]}>
-              <Text style={{ fontSize: 12.5, fontWeight: '600', color: semantic ? c.onChipActive : c.text }}>✨ {t('по смыслу')}</Text>
-            </Pressable>
-            <IconBtn name="close" size={20} color={c.sub} onPress={() => { setSearching(false); setQuery(''); }} />
-          </View>
-        ) : (
-          <>
-            <Text style={[styles.logo, { color: c.text }]} numberOfLines={1}>
-              {tab === 'boards' ? t('Доски') : currentBoard ? `${currentBoard.emoji ?? ''} ${currentBoard.name}`.trim() : 'Grabbit'}
-            </Text>
-            {tab === 'feed' && <IconBtn name="search" onPress={() => setSearching(true)} label={t('Поиск')} />}
-            <IconBtn name="settings-outline" onPress={() => setSettingsOpen(true)} label={t('Настройки')} />
-          </>
-        )}
+        <Image source={require('./assets/icon.png')} style={styles.brandIcon} />
+        <Text style={[styles.logo, { color: c.text }]} numberOfLines={1}>{tab === 'boards' ? t('Доски') : currentBoard ? `${currentBoard.emoji ?? ''} ${currentBoard.name}`.trim() : 'Grabbit'}</Text>
+        <IconBtn name="settings-outline" onPress={() => setSettingsOpen(true)} label={t('Настройки')} />
       </View>
+      {tab === 'feed' && <View style={styles.searchWrap}><View style={[styles.search, { backgroundColor: c.card }]}>
+        <Ionicons name="search" size={18} color={c.faint} />
+        <TextInput value={query} onChangeText={setQuery} onFocus={() => setSearching(true)} onBlur={() => setSearching(false)} accessibilityLabel={t('Поиск')} placeholder={semantic ? t('Спроси: «как монтировать видео»') : t('Поиск: слово, тег, автор')} placeholderTextColor={c.faint}
+          style={[styles.searchInput, { color: c.text }]} returnKeyType="search" />
+        <Pressable onPress={() => { offlineWarned.current = false; setSemantic(!semantic); }} hitSlop={6} accessibilityLabel={t('по смыслу')}
+          style={[styles.semBtn, { backgroundColor: semantic ? c.chipActive : c.chip }]}><Text style={{ fontSize: 12, fontWeight: '600', color: semantic ? c.onChipActive : c.text }}>✨</Text></Pressable>
+        {!!query && <IconBtn name="close" size={18} color={c.sub} onPress={() => setQuery('')} label={t('Закрыть')} />}
+      </View></View>}
 
       <View style={{ flex: 1 }}>
         {tab === 'feed' ? (
@@ -264,19 +260,13 @@ function Main() {
         )}
       </View>
 
-      <View style={[styles.tabbar, { paddingBottom: Math.max(insets.bottom, 8), backgroundColor: c.tabbar, borderTopColor: c.line }]}>
-        <TabBtn icon="grid-outline" label={t('Лента')} active={tab === 'feed'} onPress={() => setTab('feed')} />
-        <TabBtn icon="albums-outline" label={t('Доски')} active={tab === 'boards'} onPress={() => setTab('boards')} />
-      </View>
-      <Pressable onPress={openAdd} accessibilityLabel={t('Добавить ссылку')}
-        style={({ pressed }) => [styles.fab, { bottom: Math.max(insets.bottom, 8) + 64, backgroundColor: c.text, opacity: pressed ? 0.85 : 1 }]}>
-        <Ionicons name="add" size={26} color={c.bg} />
-      </Pressable>
+      <BottomNav tab={tab} onChange={setTab} onAdd={openAdd} bottomInset={insets.bottom} />
 
       <HiddenInstagramLoader enabled={st.igConnected} />
       <ActionSheet visible={!!markPost} title={markPost ? (markPost.aiTitle || markPost.title || markPost.url).slice(0, 60) : undefined} onClose={() => setMarkPost(null)} actions={[
         ...(['try', 'done', 'skip'] as const).map((m) => ({
           label: `${markLabel(m)}${markPost?.mark === m ? '  ✓' : ''}`, icon: MARK_ICON[m],
+          // eslint-disable-next-line react-hooks/refs -- This callback runs on a user press, not while rendering the action list.
           onPress: async () => { if (markPost) { await db.setMark(markPost.id, markPost.mark === m ? null : m); if (m === 'skip' && markPost.mark !== 'skip') toast(t('Скрыто из ленты: «Неважно»')); } },
         })),
         ...(markPost?.mark ? [{ label: t('Снять отметку'), icon: 'close-circle-outline', onPress: () => { if (markPost) db.setMark(markPost.id, null); } }] : []),
@@ -284,8 +274,8 @@ function Main() {
       <DetailScreen postId={detailId} boards={boards} onClose={() => setDetailId(null)} onOpenPost={setDetailId} toast={toast} onConnectInstagram={() => setIgMode('login')} />
       <SettingsScreen visible={settingsOpen} onClose={() => setSettingsOpen(false)} boards={boards} pendingCount={pending} toast={toast} onInstagram={setIgMode} initialUpdate={updateInfo} />
       <InstagramLoginModal visible={igMode != null} mode={igMode ?? 'login'} onClose={() => setIgMode(null)} onResult={onIgResult} />
-      <PromptModal visible={adding != null} title={t('Добавить ссылку')} hint={t('Пост, рилс, видео или статья.')} placeholder="https://…"
-        initial={adding ?? ''} okLabel={t('Сохранить')} onCancel={() => setAdding(null)} onOk={addLink} />
+      {adding != null && <AddPostPanel boards={boards} posts={posts} initialUrl={adding} onClose={() => setAdding(null)} onSave={addLink}
+        onOpen={post => { setAdding(null); setDetailId(post.id); }} />}
       <SaveOverlay state={saveState} delaySec={st.returnDelay} onDone={finishShare}
         onOpen={(id) => { fromShare.current = false; setSaveState(null); setTab('feed'); setDetailId(id); }} />
 
@@ -303,27 +293,15 @@ function Main() {
   );
 }
 
-function TabBtn({ icon, label, active, onPress }: { icon: string; label: string; active: boolean; onPress: () => void }) {
-  const c = useColors();
-  return (
-    <Pressable onPress={onPress} style={styles.tab} hitSlop={6}>
-      <Ionicons name={(active ? icon.replace('-outline', '') : icon) as any} size={22} color={active ? c.text : c.faint} />
-      <Text style={[styles.tabText, { color: active ? c.text : c.faint }]}>{label}</Text>
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  header: { flexDirection: 'row', alignItems: 'center', paddingLeft: 18, paddingRight: 8, height: 56 },
+  brandIcon: { width: 34, height: 34, borderRadius: 11, marginRight: 10 },
+  searchWrap: { paddingHorizontal: 16, marginBottom: 8, height: 46 },
+  header: { flexDirection: 'row', alignItems: 'center', paddingLeft: 18, paddingRight: 8, height: 72 },
   logo: { flex: 1, fontSize: 26, fontWeight: '800', letterSpacing: -0.6 },
-  search: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 22, paddingLeft: 14, height: 44, marginRight: 6 },
+  search: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 16, paddingLeft: 14, height: 46, paddingRight: 8 },
   semBtn: { borderRadius: 14, paddingHorizontal: 9, height: 28, justifyContent: 'center', marginLeft: 4 },
   searchInput: { flex: 1, marginLeft: 8, fontSize: 15.5, paddingVertical: 0 },
-  tabbar: { position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row', justifyContent: 'space-around', borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 8 },
-  tab: { alignItems: 'center', width: 110 },
-  tabText: { fontSize: 11.5, marginTop: 2, fontWeight: '500' },
-  fab: { position: 'absolute', right: 18, width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center', elevation: 6, shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 8, shadowOffset: { width: 0, height: 3 } },
   toast: { position: 'absolute', alignSelf: 'center', flexDirection: 'row', alignItems: 'center', borderRadius: 22, paddingHorizontal: 18, paddingVertical: 11 },
   toastText: { fontSize: 14.5, fontWeight: '500' },
   toastAction: { fontSize: 14.5, fontWeight: '700' },
