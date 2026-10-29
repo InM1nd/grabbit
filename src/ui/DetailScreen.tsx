@@ -1,3 +1,4 @@
+import * as DocumentPicker from 'expo-document-picker';
 import { useDialog } from './dialog';
 import * as Clipboard from 'expo-clipboard';
 import { Image } from 'expo-image';
@@ -5,7 +6,7 @@ import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import * as db from '../db';
 import { onDataChanged } from '../events';
-import { deleteThumb, reprocess } from '../processor';
+import { deleteThumb, reprocess, attachScreenshot } from '../processor';
 import { useSettings } from '../settings';
 import { useColors } from '../theme';
 import { ActionSheet, Chip, IconBtn, PromptModal } from './common';
@@ -78,6 +79,18 @@ export function DetailScreen({ postId, boards, onClose, toast, onConnectInstagra
     const p = await db.getPost(post.id);
     toast(p?.status === 'done' ? t('Описание обновлено') : t('Не вышло — попробую позже'));
   };
+  const pickShot = async () => {
+    if (!post) return;
+    try {
+      const r = await DocumentPicker.getDocumentAsync({ type: 'image/*', copyToCacheDirectory: true });
+      if (r.canceled || !r.assets?.[0]) return;
+      setBusy(true);
+      await attachScreenshot(post.id, r.assets[0].uri);
+      toast(t('Скриншот прикреплён, ИИ разбирает пост'));
+    } catch (e: any) {
+      dialog.info({ title: t('Не удалось прикрепить скриншот'), message: String(e?.message || e), danger: true });
+    } finally { setBusy(false); }
+  };
   const saveNote = async (v: string) => {
     if (!post) return;
     setEditNote(false);
@@ -97,8 +110,11 @@ export function DetailScreen({ postId, boards, onClose, toast, onConnectInstagra
       }}
       extraContent={<>
         {needsHelp && <View style={[styles.help, { backgroundColor: c.card }]}>
-          <Text style={{ color: c.sub, fontSize: 14, lineHeight: 21 }}>{post.unavailable ? t('Пост закрыт: аккаунт приватный или нужен вход. Подключи Instagram или напиши пару слов — ИИ перепишет описание.') : t('Сайт почти ничего не отдал. Напиши пару слов о посте — ИИ перепишет описание.')}</Text>
-          {post.platform === 'instagram' && !st.igConnected && <Chip label={t('Подключить Instagram')} onPress={onConnectInstagram} />}
+          <Text style={{ color: c.sub, fontSize: 14, lineHeight: 21 }}>{post.unavailable ? t('Пост закрыт: аккаунт приватный или нужен вход. Можно войти в Instagram, прикрепить скриншот поста или написать пару слов — ИИ перепишет описание.') : t('Сайт почти ничего не отдал. Прикрепи скриншот или напиши пару слов о посте — ИИ перепишет описание.')}</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+            {post.platform === 'instagram' && !st.igConnected && <Chip label={t('Войти, чтобы читать закрытые посты')} onPress={onConnectInstagram} />}
+            <Chip label={t('Поделиться скриншотом')} onPress={() => { void pickShot(); }} />
+          </View>
         </View>}
         {similar.length > 0 && <View style={{ marginTop: 24 }}>
           <Text style={[styles.label, { color: c.sub }]}>{t('Похожие посты')}</Text>

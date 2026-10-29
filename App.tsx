@@ -1,4 +1,5 @@
-import { DialogProvider } from './src/ui/dialog';
+import { DialogProvider, useDialog } from './src/ui/dialog';
+import { clearWebSession } from './modules/grabbit-cookies';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import NetInfo from '@react-native-community/netinfo';
 import * as Clipboard from 'expo-clipboard';
@@ -14,7 +15,7 @@ import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-cont
 import { extractUrl } from './src/core/url';
 import * as db from './src/db';
 import { onDataChanged } from './src/events';
-import { deleteThumb, processQueue, reprocessInstagramUnavailable, retryAllNow, saveShared, semanticSearch } from './src/processor';
+import { attachScreenshot, deleteThumb, latestClosedPost, processQueue, reprocessInstagramUnavailable, retryAllNow, saveScreenshot, saveShared, semanticSearch } from './src/processor';
 import { ensurePermission, rescheduleReminder, setupNotifications } from './src/reminders';
 import { updateSettings, useSettings } from './src/settings';
 import { DARK, LIGHT, ThemeContext, useColors } from './src/theme';
@@ -52,6 +53,7 @@ function Main() {
   const c = useColors();
   const st = useSettings();
   const insets = useSafeAreaInsets();
+  const dialog = useDialog();
   const { hasShareIntent, shareIntent, resetShareIntent } = useShareIntent({ resetOnBackground: true });
   const [tab, setTab] = useState<Tab>('feed');
   const [boardId, setBoardId] = useState<number | null>(null);
@@ -159,6 +161,24 @@ function Main() {
     (async () => {
       fromShare.current = true;
       setDetailId(null); setSettingsOpen(false); setAdding(null);
+      const img = si.files?.find((f) => (f.mimeType || '').startsWith('image/'));
+      if (img) {
+        try {
+          // Screenshot without a link: offer to attach it to the latest closed post.
+          if (!extractUrl(si.text)) {
+            const last = await latestClosedPost();
+            if (last && await dialog.confirm({ title: t('Прикрепить скриншот?'), message: t('Похоже, это скриншот к закрытому посту. Прикрепить к нему или сохранить как новый пост?'), confirmLabel: t('Прикрепить'), cancelLabel: t('Новый пост'), icon: 'image-outline', preview: { image: last.localImage, title: last.aiTitle || last.title || last.url, sub: last.platform } })) {
+              await attachScreenshot(last.id, img.path);
+              setSaveState({ kind: 'duplicate', id: last.id });
+              return;
+            }
+          }
+          const r = await saveScreenshot(img.path, si.text);
+          setSaveState({ kind: r.status === 'attached' ? 'duplicate' : 'saved', id: r.id });
+          ensurePermission().catch(() => {});
+        } catch { setSaveState({ kind: 'no-url' }); }
+        return;
+      }
       const r = await saveShared(si.text, si.webUrl, si.meta?.title ?? null);
       if (r.status === 'no-url') { setSaveState({ kind: 'no-url' }); return; }
       setSaveState({ kind: r.status === 'duplicate' ? 'duplicate' : 'saved', id: r.id });
@@ -219,6 +239,24 @@ function Main() {
     return post;
   };
 
+  // Login is optional: explain honestly before opening the official page.
+  const requestInstagram = useCallback(async (mode: 'login' | 'logout') => {
+    if (mode === 'login') {
+      dialog.info({
+        title: t('Вход в Instagram'), icon: 'logo-instagram',
+        message: t('Нужен только для закрытых постов — публичные читаются и без входа.\n\n• Вход проходит на официальной странице instagram.com внутри приложения.\n• Пароль мы не видим и никуда не отправляем.\n• Cookie сессии хранятся только на этом телефоне.\n• Выйти можно в любой момент в настройках.'),
+        buttons: [{ label: t('Отмена') }, { label: t('Продолжить'), primary: true, onPress: () => setIgMode('login') }],
+      });
+      return;
+    }
+    const ok = await dialog.confirm({ title: t('Выйти из Instagram?'), message: t('Сессия и cookie Instagram будут удалены с телефона. Закрытые посты снова станут недоступны.'), confirmLabel: t('Выйти'), danger: true, icon: 'log-out-outline' });
+    if (!ok) return;
+    if (await clearWebSession()) {
+      await updateSettings({ igConnected: false, igUserId: null });
+      toast(t('Вышел из Instagram'));
+    } else setIgMode('logout');
+  }, [dialog]);
+
   const onIgResult = async (loggedIn: boolean, userId: string | null) => {
     const mode = igMode;
     setIgMode(null);
@@ -271,8 +309,8 @@ function Main() {
         })),
         ...(markPost?.mark ? [{ label: t('Снять отметку'), icon: 'close-circle-outline', onPress: () => { if (markPost) db.setMark(markPost.id, null); } }] : []),
       ]} />
-      <DetailScreen postId={detailId} boards={boards} onClose={() => setDetailId(null)} onOpenPost={setDetailId} toast={toast} onConnectInstagram={() => setIgMode('login')} />
-      <SettingsScreen visible={settingsOpen} onClose={() => setSettingsOpen(false)} boards={boards} pendingCount={pending} toast={toast} onInstagram={setIgMode} initialUpdate={updateInfo} />
+      <DetailScreen postId={detailId} boards={boards} onClose={() => setDetailId(null)} onOpenPost={setDetailId} toast={toast} onConnectInstagram={() => { void requestInstagram('login'); }} />
+      <SettingsScreen visible={settingsOpen} onClose={() => setSettingsOpen(false)} boards={boards} pendingCount={pending} toast={toast} onInstagram={(m) => { void requestInstagram(m); }} initialUpdate={updateInfo} />
       <InstagramLoginModal visible={igMode != null} mode={igMode ?? 'login'} onClose={() => setIgMode(null)} onResult={onIgResult} />
       {adding != null && <AddPostPanel boards={boards} posts={posts} initialUrl={adding} onClose={() => setAdding(null)} onSave={addLink}
         onOpen={post => { setAdding(null); setDetailId(post.id); }} />}

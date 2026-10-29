@@ -145,9 +145,10 @@ export function SettingsScreen({ visible, onClose, boards, pendingCount, toast, 
           </Section>
 
           <Section title="Instagram">
-            <Row label={s.igConnected ? t('Подключён') : t('Не подключён')} sub={t('Нужен, чтобы читать посты закрытых аккаунтов. Сессия хранится только на телефоне.')}>
-              {s.igConnected ? <SmallBtn label={t('Выйти')} onPress={() => onInstagram('logout')} /> : <SmallBtn label={t('Войти')} accent onPress={() => onInstagram('login')} />}
+            <Row label={s.igConnected ? t('Вход выполнен') : t('Вход не выполнен')} sub={t('Необязательно. Нужен только для закрытых постов — публичные читаются без входа. Вход на официальной странице, пароль мы не видим, cookie только на телефоне.')}>
+              {!s.igConnected && <SmallBtn label={t('Войти')} accent onPress={() => onInstagram('login')} />}
             </Row>
+            {s.igConnected && <Row label={t('Выйти из Instagram')} sub={t('Удалить сессию и cookie с телефона')} onPress={() => onInstagram('logout')}><Ionicons name="log-out-outline" size={18} color={c.faint} /></Row>}
             {s.igConnected && igLocked > 0 && (
               <Row label={t('Закрытые посты: {n}', { n: igLocked })} sub={t('Перечитать их через твою сессию')}>
                 <SmallBtn label={t('Обновить')} onPress={async () => { const n = await reprocessInstagramUnavailable(); toast(t('Обновляю {n}…', { n })); }} />

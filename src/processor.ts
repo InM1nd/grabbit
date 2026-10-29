@@ -57,6 +57,7 @@ async function cacheThumb(id: number, url: string): Promise<string | null> {
 
 export function deleteThumb(id: number) {
   try { const f = new File(thumbsDir(), `${id}.jpg`); if (f.exists) f.delete(); } catch {}
+  try { const f = new File(thumbsDir(), `${id}-shot.jpg`); if (f.exists) f.delete(); } catch {}
 }
 
 let running: Promise<void> | null = null;
@@ -129,7 +130,7 @@ async function processOne(post: db.Post) {
       title: m.title ?? null, description: m.description ?? null, author: m.author ?? null, image: m.image ?? null,
       meta_fetched: 1, meta_blocked: m.blocked ? 1 : 0, unavailable: m.unavailable ? 1 : 0,
     };
-    if (m.image) fields.local_image = await cacheThumb(p.id, m.image);
+    if (m.image && !p.shot) fields.local_image = await cacheThumb(p.id, m.image);
     p = { ...p, localImage: fields.local_image ?? p.localImage };
     await db.updatePost(p.id, fields);
   }
@@ -150,7 +151,7 @@ async function processOne(post: db.Post) {
     const note = p.note ?? undefined;
     // Weak caption (emoji/hashtags only) → let Gemini look at the cached preview image.
     let image: { mimeType: string; data: string } | undefined;
-    if (st.aiVision && p.localImage && isWeakText(meta, sharedText, note)) {
+    if (p.localImage && (p.shot || (st.aiVision && isWeakText(meta, sharedText, note)))) {
       try { const data = await new File(p.localImage).base64(); image = { mimeType: sniffMime(data), data }; } catch {}
     }
     const ai = await analyzePost({ meta, sharedText, boards, image, note, lang: st.aiLang }, auth);
@@ -268,4 +269,47 @@ export async function semanticSearch(query: string, posts: db.Post[]): Promise<d
   } catch {
     return null;
   }
+}
+
+/** Pseudo-URL for a post that was created from a screenshot alone (no link). */
+export const SHOT_URL_PREFIX = 'grabbit://shot/';
+export const isShotUrl = (u: string) => u.startsWith(SHOT_URL_PREFIX);
+
+/**
+ * Attach a screenshot (file:// or content:// URI) to a post: it becomes the preview and the AI
+ * reads it even if the post itself is closed. Re-runs the AI step.
+ */
+export async function attachScreenshot(id: number, uri: string): Promise<void> {
+  const dir = thumbsDir();
+  if (!dir.exists) dir.create({ intermediates: true, idempotent: true });
+  const dest = new File(dir, `${id}-shot.jpg`);
+  if (dest.exists) dest.delete();
+  new File(uri).copy(dest);
+  await db.updatePost(id, { local_image: dest.uri, shot: 1, status: 'pending', attempts: 0, next_try_at: 0, last_error: null });
+  await db.clearEmbedding(id);
+  processQueue(id).catch(() => {});
+}
+
+/** Save a shared screenshot: to the post whose link came along, or as a new post of its own. */
+export async function saveScreenshot(uri: string, text?: string | null): Promise<{ id: number; status: 'saved' | 'attached' }> {
+  const url = extractUrl(text);
+  let id: number;
+  let status: 'saved' | 'attached' = 'saved';
+  if (url) {
+    const r = await saveShared(text, null, null);
+    if (r.status === 'no-url') throw new Error('no-url');
+    id = r.id; if (r.status === 'duplicate') status = 'attached';
+  } else {
+    id = await db.insertPost({ url: SHOT_URL_PREFIX + Date.now(), rawText: text?.trim() || null, platform: 'web', title: t('Скриншот') });
+    await db.updatePost(id, { meta_fetched: 1, meta_blocked: 1 });
+  }
+  await attachScreenshot(id, uri);
+  return { id, status };
+}
+
+/** Most recent closed post (candidate for "attach this screenshot to…"). */
+export async function latestClosedPost(): Promise<db.Post | null> {
+  const d = await db.getDb();
+  const r = await d.getFirstAsync<{ id: number }>("SELECT id FROM posts WHERE (unavailable = 1 OR meta_blocked = 1) AND shot = 0 AND created_at > ? ORDER BY created_at DESC LIMIT 1", Date.now() - 3 * 86400_000);
+  return r ? db.getPost(r.id) : null;
 }

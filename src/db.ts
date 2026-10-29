@@ -13,6 +13,8 @@ export interface Post {
   id: number;
   url: string;
   rawText: string | null;
+  /** A screenshot was attached by the user (localImage is that screenshot). */
+  shot?: boolean;
   platform: Platform;
   title: string | null;
   description: string | null;
@@ -91,6 +93,8 @@ export function getDb(): Promise<SQLite.SQLiteDatabase> {
       if (!cols.includes('mark')) await db.execAsync('ALTER TABLE posts ADD COLUMN mark TEXT');
       if (!cols.includes('embedding')) await db.execAsync('ALTER TABLE posts ADD COLUMN embedding TEXT');
       if (!cols.includes('embed_model')) await db.execAsync('ALTER TABLE posts ADD COLUMN embed_model TEXT');
+      // v4 (1.7.0): user-attached screenshot → always show it to the AI
+      if (!cols.includes('shot')) await db.execAsync('ALTER TABLE posts ADD COLUMN shot INTEGER NOT NULL DEFAULT 0');
       await db.execAsync('PRAGMA foreign_keys = ON;');
       return db;
     })();
@@ -115,7 +119,7 @@ function rowToPost(r: any): Post {
   return {
     id: r.id, url: r.url, rawText: r.raw_text, platform: r.platform,
     title: r.title, description: r.description, author: r.author, image: r.image, localImage: r.local_image,
-    metaFetched: !!r.meta_fetched, metaBlocked: !!r.meta_blocked, unavailable: !!r.unavailable, note: r.note ?? null,
+    metaFetched: !!r.meta_fetched, shot: !!r.shot, metaBlocked: !!r.meta_blocked, unavailable: !!r.unavailable, note: r.note ?? null,
     aiTitle: r.ai_title, summary: r.summary, tags, boardId: r.board_id,
     status: r.status, attempts: r.attempts, nextTryAt: r.next_try_at, lastError: r.last_error,
     createdAt: r.created_at, openedAt: r.opened_at, remindedAt: r.reminded_at,
