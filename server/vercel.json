@@ -1,0 +1,3 @@
+{
+  "rewrites": [{ "source": "/v1beta/:path*", "destination": "/api/gemini?path=:path*" }]
+}

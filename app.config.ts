@@ -1,7 +1,9 @@
 import type { ExpoConfig } from 'expo/config';
 
 // Personal app: the Gemini key is read from the build machine's env and baked into the bundle.
-const geminiApiKey = (process.env.GEMINI_API_KEY || '').trim();
+// Release builds route AI through the Grabbit proxy (server/); the Gemini key is then NOT baked in.
+const aiProxyUrl = (process.env.GRABBIT_AI_PROXY_URL || '').trim();
+const geminiApiKey = aiProxyUrl ? '' : (process.env.GEMINI_API_KEY || '').trim();
 // In-app updates (optional): a READ-ONLY fine-grained token for the private repo, or a public manifest URL.
 // Never put the push token here.
 const updateToken = (process.env.PINBOX_UPDATE_TOKEN || '').trim();
@@ -11,14 +13,14 @@ const config: ExpoConfig = {
   name: 'Grabbit',
   slug: 'polka',
   scheme: 'pinbox',
-  version: '1.5.0',
+  version: '1.6.0',
   orientation: 'portrait',
   icon: './assets/icon.png',
   userInterfaceStyle: 'automatic',
   backgroundColor: '#FFFFFF',
   android: {
     package: 'com.zabolotny.polka',
-    versionCode: 12,
+    versionCode: 13,
     adaptiveIcon: {
       backgroundColor: '#F8483E',
       foregroundImage: './assets/android-icon-foreground.png',
@@ -62,6 +64,7 @@ const config: ExpoConfig = {
       },
     ],
     'expo-sqlite',
+    'expo-secure-store',
     'expo-image',
     [
       'expo-splash-screen',
@@ -72,7 +75,7 @@ const config: ExpoConfig = {
       { icon: './assets/notification-icon.png', color: '#F8483E', defaultChannel: 'reminders' },
     ],
   ],
-  extra: { geminiApiKey, updateRepo: 'InM1nd/polka', updateToken, updateManifestUrl },
+  extra: { aiProxyUrl, geminiApiKey, updateRepo: 'InM1nd/polka', updateToken, updateManifestUrl },
 };
 
 export default config;

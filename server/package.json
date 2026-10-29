@@ -1,0 +1,6 @@
+{
+  "name": "grabbit-ai-proxy",
+  "private": true,
+  "type": "module",
+  "dependencies": { "@vercel/functions": "^3.10.4" }
+}

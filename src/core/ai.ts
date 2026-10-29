@@ -1,11 +1,11 @@
 import type { AiResult, Metadata } from './types';
 import { PLATFORM_LABEL } from './url';
+import { canUseGemini, geminiTarget, proxyLimitInfo, type GeminiAuth } from './gemini';
 
 // 3.5-flash: good quality + reliable on the free tier; the -latest aliases are fallbacks (3.8-flash often 503s under load).
 // Order = preference. Benchmarked 2026-10-28 (scripts/ai-bench.mts): gemini-flash-latest timed out 8/10 at 20 s,
 // gemini-3.5-flash hits free-tier 429/503 after a few calls a minute, the flash-lite models answer reliably.
 export const GEMINI_MODELS = ['gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-flash-lite-latest', 'gemini-3.5-flash-lite'];
-const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 /** model -> epoch ms until which it is skipped (429 quota / 404 gone). */
 const cooldown = new Map<string, number>();
@@ -13,13 +13,15 @@ let available: Set<string> | null = null;
 let availableAt = 0;
 
 /** Drop models the key can't use (deprecated/renamed). Cached for 6 h; failures are ignored. */
-async function refreshAvailable(apiKey: string) {
+async function refreshAvailable(auth: GeminiAuth) {
   if (Date.now() - availableAt < 6 * 3600_000) return;
   availableAt = Date.now();
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 5000);
-    const r = await fetch(`${ENDPOINT}?pageSize=200`, { headers: { 'x-goog-api-key': apiKey }, signal: ctrl.signal });
+    const tg = geminiTarget(auth, 'models?pageSize=200');
+    if (!tg) return;
+    const r = await fetch(tg.url, { headers: tg.headers, signal: ctrl.signal });
     clearTimeout(t);
     if (!r.ok) return;
     const j = await r.json();
@@ -39,7 +41,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export function _resetAiState() { cooldown.clear(); available = null; availableAt = 0; }
 
 export class AiError extends Error {
-  constructor(message: string, public retryable: boolean, public status?: number) { super(message); }
+  constructor(message: string, public retryable: boolean, public status?: number, public limit?: { scope: 'device' | 'global'; retryAfterSec: number }) { super(message); }
 }
 
 export interface AiInput {
@@ -125,8 +127,8 @@ function matchBoard(name: string, boards: string[]): string {
  * over transiently failing models (503 / timeout / bad JSON) before giving up.
  * `timeoutMs` is per request; `budgetMs` caps the whole call.
  */
-export async function analyzePost(input: AiInput, apiKey: string, timeoutMs = 12000, budgetMs = 45000): Promise<AiResult> {
-  if (!apiKey) throw new AiError('Нет ключа Gemini', false);
+export async function analyzePost(input: AiInput, auth: GeminiAuth, timeoutMs = 12000, budgetMs = 45000): Promise<AiResult> {
+  if (!canUseGemini(auth)) throw new AiError('Нет ключа Gemini', false);
   const started = Date.now();
   const prompt = buildPrompt(input);
   const bodyFor = (model: string) => JSON.stringify({
@@ -141,7 +143,7 @@ export async function analyzePost(input: AiInput, apiKey: string, timeoutMs = 12
       ...(model.includes('lite') ? {} : { thinkingConfig: { thinkingLevel: 'low' } }),
     },
   });
-  await refreshAvailable(apiKey);
+  await refreshAvailable(auth);
   let lastErr: AiError = new AiError('Gemini недоступен', true);
   let anyAttempt = false;
   const transient: string[] = [];
@@ -153,9 +155,10 @@ export async function analyzePost(input: AiInput, apiKey: string, timeoutMs = 12
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), Math.min(timeoutMs, left));
     try {
-      const r = await fetch(`${ENDPOINT}/${model}:generateContent`, {
+      const tg = geminiTarget(auth, `models/${model}:generateContent`)!;
+      const r = await fetch(tg.url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+        headers: { 'Content-Type': 'application/json', ...tg.headers },
         body: bodyFor(model),
         signal: ctrl.signal,
       });
@@ -163,6 +166,8 @@ export async function analyzePost(input: AiInput, apiKey: string, timeoutMs = 12
       if (!r.ok) {
         let msg = `HTTP ${r.status}`;
         try { msg = JSON.parse(txt).error?.message?.slice(0, 200) || msg; } catch {}
+        const lim = proxyLimitInfo(r.status, txt);
+        if (lim) throw new AiError(msg, true, 429, lim); // our daily limit: other models won't help
         if (r.status === 429) cooldown.set(model, Date.now() + retryDelayMs(txt));
         else if (r.status === 404) cooldown.set(model, Date.now() + 24 * 3600_000);
         else if (r.status >= 500) transient.push(model);
@@ -202,6 +207,7 @@ export async function analyzePost(input: AiInput, apiKey: string, timeoutMs = 12
         model: j.modelVersion || model,
       };
     } catch (e: any) {
+      if (e instanceof AiError && e.limit) throw e;
       // network error / timeout → retry later
       transient.push(model);
       lastErr = e instanceof AiError ? e : new AiError(e?.name === 'AbortError' ? 'Таймаут Gemini' : String(e?.message || e), true);

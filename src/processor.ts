@@ -1,5 +1,4 @@
 import NetInfo from '@react-native-community/netinfo';
-import Constants from 'expo-constants';
 import { Directory, File, Paths } from 'expo-file-system';
 import { analyzePost, AiError, isWeakText, sniffMime } from './core/ai';
 import { fetchMetadata } from './core/metadata';
@@ -12,8 +11,16 @@ import { getSettings, loadSettings } from './settings';
 import { t } from './i18n';
 import { EmbedError, embedText, embedTexts, packVec, rankByVector } from './core/embed';
 
-const API_KEY: string = (Constants.expoConfig?.extra as any)?.geminiApiKey || '';
-export const hasApiKey = () => !!API_KEY;
+import { aiMode, getGeminiAuth } from './aiAuth';
+import { canUseGemini } from './core/gemini';
+export const hasApiKey = () => aiMode() !== 'none';
+
+/** Friendly text for our proxy's daily limit. */
+function limitMessage(scope: 'device' | 'global') {
+  return scope === 'device'
+    ? t('Дневной лимит ИИ исчерпан. Пост опишется завтра, или добавь свой ключ Gemini в настройках')
+    : t('Бесплатный ИИ-сервер сегодня перегружен. Пост опишется позже, или добавь свой ключ Gemini в настройках');
+}
 
 export type SaveResult = { status: 'saved' | 'duplicate'; id: number } | { status: 'no-url' };
 
@@ -132,7 +139,8 @@ async function processOne(post: db.Post) {
     await db.updatePost(p.id, { status: 'done', last_error: null, board_id: cur?.boardId ?? st.defaultBoardId ?? null });
     return;
   }
-  if (!API_KEY) {
+  const auth = await getGeminiAuth();
+  if (!canUseGemini(auth)) {
     await db.updatePost(p.id, { status: 'error', last_error: t('Нет ключа Gemini в сборке') });
     return;
   }
@@ -145,7 +153,7 @@ async function processOne(post: db.Post) {
     if (st.aiVision && p.localImage && isWeakText(meta, sharedText, note)) {
       try { const data = await new File(p.localImage).base64(); image = { mimeType: sniffMime(data), data }; } catch {}
     }
-    const ai = await analyzePost({ meta, sharedText, boards, image, note, lang: st.aiLang }, API_KEY);
+    const ai = await analyzePost({ meta, sharedText, boards, image, note, lang: st.aiLang }, auth);
     const defaultBoard = st.defaultBoardId != null && (await db.listBoards()).some((b) => b.id === st.defaultBoardId) ? st.defaultBoardId : null;
     const boardId = defaultBoard ?? (await db.getOrCreateBoard(ai.board, ai.boardEmoji));
     const cur = await db.getPost(p.id);
@@ -158,6 +166,11 @@ async function processOne(post: db.Post) {
     });
     await db.clearEmbedding(p.id); // content changed → (re)embed in backfillEmbeddings()
   } catch (e: any) {
+    if (e instanceof AiError && e.limit) {
+      // Not the post's fault: wait for the daily reset without burning attempts.
+      await db.updatePost(p.id, { next_try_at: Date.now() + e.limit.retryAfterSec * 1000 + 60_000, last_error: limitMessage(e.limit.scope) });
+      return;
+    }
     const retryable = e instanceof AiError ? e.retryable : true;
     const attempts = p.attempts + 1;
     if (retryable && attempts < 12) {
@@ -217,7 +230,9 @@ let embedPausedUntil = 0;
  * Best effort: any failure just pauses the backfill; search falls back to plain text.
  */
 export async function backfillEmbeddings(maxBatches = 5): Promise<number> {
-  if (!API_KEY || !getSettings().aiEnabled || Date.now() < embedPausedUntil) return 0;
+  if (!getSettings().aiEnabled || Date.now() < embedPausedUntil) return 0;
+  const auth = await getGeminiAuth();
+  if (!canUseGemini(auth)) return 0;
   let done = 0;
   for (let b = 0; b < maxBatches; b++) {
     const todo = await db.postsNeedingEmbedding(32);
@@ -227,7 +242,7 @@ export async function backfillEmbeddings(maxBatches = 5): Promise<number> {
     const real = withText.filter((x) => x.text);
     if (!real.length) continue;
     try {
-      const vecs = await embedTexts(real.map((x) => x.text), API_KEY, 'RETRIEVAL_DOCUMENT');
+      const vecs = await embedTexts(real.map((x) => x.text), auth, 'RETRIEVAL_DOCUMENT');
       for (let i = 0; i < real.length; i++) await db.setEmbedding(real[i].p.id, packVec(vecs[i]));
       done += real.length;
     } catch (e: any) {
@@ -244,9 +259,11 @@ export async function backfillEmbeddings(maxBatches = 5): Promise<number> {
  */
 export async function semanticSearch(query: string, posts: db.Post[]): Promise<db.Post[] | null> {
   const q = query.trim();
-  if (!q || !API_KEY || !posts.some((p) => p.embedding?.length)) return null;
+  if (!q || !posts.some((p) => p.embedding?.length)) return null;
   try {
-    const [vec] = await embedTexts([q], API_KEY, 'RETRIEVAL_QUERY', 8000);
+    const auth = await getGeminiAuth();
+    if (!canUseGemini(auth)) return null;
+    const [vec] = await embedTexts([q], auth, 'RETRIEVAL_QUERY', 8000);
     return rankByVector(vec, posts, { limit: 60 }).map((x) => x.post);
   } catch {
     return null;

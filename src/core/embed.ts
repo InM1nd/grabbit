@@ -3,7 +3,7 @@
 
 export const EMBED_MODEL = 'gemini-embedding-001';
 export const EMBED_DIM = 256;
-const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
+import { canUseGemini, geminiTarget, type GeminiAuth } from './gemini';
 
 export type TaskType = 'RETRIEVAL_DOCUMENT' | 'RETRIEVAL_QUERY' | 'SEMANTIC_SIMILARITY';
 
@@ -53,15 +53,16 @@ export class EmbedError extends Error {
 }
 
 /** Embed up to 100 texts in one request. Returns normalized vectors in input order. */
-export async function embedTexts(texts: string[], apiKey: string, task: TaskType, timeoutMs = 12000): Promise<number[][]> {
+export async function embedTexts(texts: string[], auth: GeminiAuth, task: TaskType, timeoutMs = 12000): Promise<number[][]> {
   if (!texts.length) return [];
-  if (!apiKey) throw new EmbedError('no key');
+  const tg = geminiTarget(auth, `models/${EMBED_MODEL}:batchEmbedContents`);
+  if (!canUseGemini(auth) || !tg) throw new EmbedError('no key');
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const r = await fetch(`${ENDPOINT}/${EMBED_MODEL}:batchEmbedContents`, {
+    const r = await fetch(tg.url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+      headers: { 'Content-Type': 'application/json', ...tg.headers },
       body: JSON.stringify({
         requests: texts.map((text) => ({
           model: `models/${EMBED_MODEL}`, content: { parts: [{ text }] }, taskType: task, outputDimensionality: EMBED_DIM,

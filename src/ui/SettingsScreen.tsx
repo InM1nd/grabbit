@@ -1,12 +1,13 @@
 import { useDialog } from './dialog';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Linking, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { ActivityIndicator, Linking, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { aiMode, ensureAiAuth, hasUserKey, setUserKey } from '../aiAuth';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { exportBackup, importBackup } from '../backup';
 import { GEMINI_MODELS } from '../core/ai';
 import type { Board } from '../db';
-import { clearThumbCache, countInstagramUnavailable, hasApiKey, processQueue, reprocessInstagramUnavailable, retryAllNow } from '../processor';
+import { clearThumbCache, countInstagramUnavailable, processQueue, reprocessInstagramUnavailable, retryAllNow } from '../processor';
 import { ensurePermission, rescheduleReminder } from '../reminders';
 import { updateSettings, useSettings, type Settings } from '../settings';
 import { useColors } from '../theme';
@@ -67,6 +68,11 @@ export function SettingsScreen({ visible, onClose, boards, pendingCount, toast, 
     if (reschedule) rescheduleReminder();
   };
   const defBoard = boards.find((b) => b.id === s.defaultBoardId);
+  const [keyEdit, setKeyEdit] = useState(false);
+  const [, bump] = useState(0);
+  useEffect(() => { if (visible) ensureAiAuth()?.then(() => bump((x) => x + 1)); }, [visible]);
+  const mode = aiMode();
+  const aiSub = mode === 'own' ? t('Свой ключ, без лимитов') : mode === 'proxy' ? t('Бесплатно через сервер Grabbit, 50 постов в день') : mode === 'build' ? `Gemini ${GEMINI_MODELS[0]}` : t('Ключ Gemini не найден в сборке');
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose} statusBarTranslucent>
@@ -86,8 +92,11 @@ export function SettingsScreen({ visible, onClose, boards, pendingCount, toast, 
           </Section>
 
           <Section title={t('ИИ-описания')}>
-            <Row label={t('Описывать посты ИИ')} sub={hasApiKey() ? `Gemini ${GEMINI_MODELS[0]}` : t('Ключ Gemini не найден в сборке')}>
+            <Row label={t('Описывать посты ИИ')} sub={aiSub}>
               <Sw value={s.aiEnabled} onChange={(v) => set({ aiEnabled: v })} />
+            </Row>
+            <Row label={t('Свой ключ Gemini')} sub={hasUserKey() ? t('Добавлен · лимиты сняты') : t('Необязательно. Снимает дневной лимит')} onPress={() => setKeyEdit(true)}>
+              <Ionicons name="chevron-forward" size={18} color={c.faint} />
             </Row>
             <Row label={t('Язык описаний')} column>
               <Seg value={s.aiLang} onChange={(v) => set({ aiLang: v })} options={[['ru', t('Русский')], ['en', 'English'], ['orig', t('Как в посте')]]} />
@@ -186,6 +195,35 @@ export function SettingsScreen({ visible, onClose, boards, pendingCount, toast, 
         { label: `✨  ${t('Авто — выбирает ИИ')}${s.defaultBoardId == null ? '  ✓' : ''}`, onPress: () => set({ defaultBoardId: null }) },
         ...boards.map((b) => ({ label: `${b.emoji ?? '📌'}  ${b.name}${s.defaultBoardId === b.id ? '  ✓' : ''}`, onPress: () => set({ defaultBoardId: b.id }) })),
       ]} />
+      <KeyModal visible={keyEdit} has={hasUserKey()} onClose={() => setKeyEdit(false)} onSave={async (k) => {
+        await setUserKey(k); setKeyEdit(false); bump((x) => x + 1);
+        toast(k ? t('Ключ сохранён') : t('Ключ удалён'));
+        if (k) retryAllNow();
+      }} />
+    </Modal>
+  );
+}
+
+function KeyModal({ visible, has, onClose, onSave }: { visible: boolean; has: boolean; onClose: () => void; onSave: (k: string | null) => void }) {
+  const c = useColors();
+  const [v, setV] = useState('');
+  useEffect(() => { if (visible) setV(''); }, [visible]);
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
+      <Pressable style={styles.keyBack} onPress={onClose}>
+        <Pressable style={[styles.keyCard, { backgroundColor: c.elevated }]} onPress={() => {}}>
+          <Text style={{ color: c.text, fontSize: 18, fontWeight: '700' }}>{t('Свой ключ Gemini')}</Text>
+          <Text style={{ color: c.sub, marginTop: 6, lineHeight: 20 }}>{t('Бесплатный ключ можно взять в Google AI Studio. Он хранится только на телефоне в защищённом хранилище, и запросы идут напрямую в Google без лимитов Grabbit.')}</Text>
+          <Pressable onPress={() => Linking.openURL('https://aistudio.google.com/apikey')}><Text style={{ color: c.accent, marginTop: 8, fontWeight: '600' }}>aistudio.google.com/apikey</Text></Pressable>
+          <TextInput value={v} onChangeText={setV} placeholder={has ? t('Ключ сохранён · вставь новый') : 'AIza…'} placeholderTextColor={c.faint}
+            autoCapitalize="none" autoCorrect={false} secureTextEntry style={[styles.keyInput, { color: c.text, backgroundColor: c.card }]} />
+          <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 14 }}>
+            {has && <SmallBtn label={t('Удалить')} onPress={() => onSave(null)} />}
+            <SmallBtn label={t('Отмена')} onPress={onClose} />
+            <SmallBtn label={t('Сохранить')} accent onPress={() => v.trim() && onSave(v.trim())} />
+          </View>
+        </Pressable>
+      </Pressable>
     </Modal>
   );
 }
@@ -242,6 +280,9 @@ function SmallBtn({ label, onPress, accent }: { label: string; onPress: () => vo
 }
 
 const styles = StyleSheet.create({
+  keyBack: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', padding: 24 },
+  keyCard: { borderRadius: 20, padding: 20 },
+  keyInput: { marginTop: 14, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15 },
   top: { flexDirection: 'row', alignItems: 'center', height: 52, paddingHorizontal: 6 },
   h1: { fontSize: 20, fontWeight: '700', marginLeft: 4 },
   section: { fontSize: 12.5, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8, marginLeft: 4 },

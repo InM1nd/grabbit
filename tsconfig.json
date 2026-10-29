@@ -6,6 +6,7 @@
   "exclude": [
     "node_modules",
     "tests",
+    "server",
     "scripts/inject-smoke.ts"
   ]
 }

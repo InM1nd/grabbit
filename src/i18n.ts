@@ -232,6 +232,17 @@ const T: [string, string, string][] = [
   ['{n} мин назад', '{n} min ago', '{n} хв тому'],
   ['{n} ч назад', '{n} h ago', '{n} год тому'],
   ['{n} дн назад', '{n} d ago', '{n} дн тому'],
+  ['Дневной лимит ИИ исчерпан. Пост опишется завтра, или добавь свой ключ Gemini в настройках', 'Daily AI limit reached. The post will be described tomorrow, or add your own Gemini key in Settings', 'Денний ліміт ШІ вичерпано. Пост опишеться завтра, або додай свій ключ Gemini в налаштуваннях'],
+  ['Бесплатный ИИ-сервер сегодня перегружен. Пост опишется позже, или добавь свой ключ Gemini в настройках', 'The free AI server is overloaded today. The post will be described later, or add your own Gemini key in Settings', 'Безкоштовний ШІ-сервер сьогодні перевантажений. Пост опишеться пізніше, або додай свій ключ Gemini в налаштуваннях'],
+  ['Свой ключ, без лимитов', 'Own key, no limits', 'Свій ключ, без лімітів'],
+  ['Бесплатно через сервер Grabbit, 50 постов в день', 'Free via the Grabbit server, 50 posts a day', 'Безкоштовно через сервер Grabbit, 50 постів на день'],
+  ['Свой ключ Gemini', 'Own Gemini key', 'Свій ключ Gemini'],
+  ['Добавлен · лимиты сняты', 'Added · no limits', 'Додано · ліміти знято'],
+  ['Необязательно. Снимает дневной лимит', 'Optional. Removes the daily limit', 'Необовʼязково. Знімає денний ліміт'],
+  ['Ключ сохранён', 'Key saved', 'Ключ збережено'],
+  ['Ключ удалён', 'Key removed', 'Ключ видалено'],
+  ['Бесплатный ключ можно взять в Google AI Studio. Он хранится только на телефоне в защищённом хранилище, и запросы идут напрямую в Google без лимитов Grabbit.', 'You can get a free key in Google AI Studio. It is stored only on your phone in secure storage, and requests go straight to Google without Grabbit limits.', 'Безкоштовний ключ можна взяти в Google AI Studio. Він зберігається лише на телефоні в захищеному сховищі, і запити йдуть напряму в Google без лімітів Grabbit.'],
+  ['Ключ сохранён · вставь новый', 'Key saved · paste a new one', 'Ключ збережено · встав новий'],
 ];
 
 const DICT: Record<'en' | 'uk', Map<string, string>> = { en: new Map(), uk: new Map() };
