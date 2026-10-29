@@ -13,6 +13,24 @@ import { EmbedError, embedText, embedTexts, packVec, rankByVector } from './core
 
 import { aiMode, getGeminiAuth } from './aiAuth';
 import { canUseGemini } from './core/gemini';
+import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
+
+/** Re-encode the preview as JPEG ≤1080px wide so it stays well under the proxy's 1.5 MB image cap. */
+async function aiImage(uri: string): Promise<{ mimeType: string; data: string } | undefined> {
+  try {
+    const src = uri.startsWith('file:') || uri.includes('://') ? uri : `file://${uri}`;
+    const info = await manipulateAsync(src, []);
+    const actions = info.width > 1080 ? [{ resize: { width: 1080 } }] : [];
+    const r = await manipulateAsync(src, actions, { compress: 0.8, format: SaveFormat.JPEG, base64: true });
+    if (r.base64 && r.base64.length * 0.75 < 1_400_000) return { mimeType: 'image/jpeg', data: r.base64 };
+  } catch {}
+  try {
+    const data = await new File(uri).base64();
+    const mimeType = sniffMime(data);
+    if (data.length * 0.75 < 1_400_000 && mimeType !== 'image/gif') return { mimeType, data };
+  } catch {}
+  return undefined;
+}
 export const hasApiKey = () => aiMode() !== 'none';
 
 /** Friendly text for our proxy's daily limit. */
@@ -152,7 +170,7 @@ async function processOne(post: db.Post) {
     // Weak caption (emoji/hashtags only) → let Gemini look at the cached preview image.
     let image: { mimeType: string; data: string } | undefined;
     if (p.localImage && (p.shot || (st.aiVision && isWeakText(meta, sharedText, note)))) {
-      try { const data = await new File(p.localImage).base64(); image = { mimeType: sniffMime(data), data }; } catch {}
+      image = await aiImage(p.localImage);
     }
     const ai = await analyzePost({ meta, sharedText, boards, image, note, lang: st.aiLang, boardLang: getLang() }, auth);
     const defaultBoard = st.defaultBoardId != null && (await db.listBoards()).some((b) => b.id === st.defaultBoardId) ? st.defaultBoardId : null;

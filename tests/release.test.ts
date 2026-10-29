@@ -30,7 +30,7 @@ test('manifest + source selection', () => {
 
 test('public releases API without token (live; not-configured while the repo is private)', async () => {
   try {
-    const info = await fetchLatest({ kind: 'github-public', repo: 'InM1nd/polka' });
+    const info = await fetchLatest({ kind: 'github-public', repo: 'InM1nd/grabbit' });
     assert.match(info.version, /^\d+\.\d+\.\d+$/); assert.equal(info.needsAuth, false); assert.match(info.apkName, /\.apk$/);
   } catch (e) {
     assert.ok(e instanceof UpdateError && ['not-configured', 'network'].includes(e.code), String(e));
@@ -38,7 +38,7 @@ test('public releases API without token (live; not-configured while the repo is 
 });
 
 test('with a token → latest release with APK asset (live, read-only GET)', { skip: !process.env.UPDATE_TEST_TOKEN }, async () => {
-  const info = await fetchLatest({ kind: 'github-token', repo: 'InM1nd/polka', token: process.env.UPDATE_TEST_TOKEN });
+  const info = await fetchLatest({ kind: 'github-token', repo: 'InM1nd/grabbit', token: process.env.UPDATE_TEST_TOKEN });
   assert.match(info.version, /^\d+\.\d+\.\d+$/); assert.equal(info.needsAuth, true); assert.match(info.apkName, /\.apk$/);
   // asset download: follow redirect with auth stripped (like OkHttp) and read the first bytes
   const r1 = await fetch(info.apkUrl, { headers: { Accept: 'application/octet-stream', Authorization: `Bearer ${process.env.UPDATE_TEST_TOKEN}` }, redirect: 'manual' });

@@ -61,7 +61,7 @@ export type UpdateSource =
   | { kind: 'github-public'; repo: string };
 
 export function pickSource(extra: { updateManifestUrl?: string; updateToken?: string; updateRepo?: string }): UpdateSource {
-  const repo = extra.updateRepo || 'InM1nd/polka';
+  const repo = extra.updateRepo || 'InM1nd/grabbit';
   if (extra.updateManifestUrl) return { kind: 'manifest', url: extra.updateManifestUrl };
   if (extra.updateToken) return { kind: 'github-token', repo, token: extra.updateToken };
   return { kind: 'github-public', repo };

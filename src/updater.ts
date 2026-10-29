@@ -9,7 +9,7 @@ export { UpdateError };
 
 export const currentVersion = (): string => Constants.expoConfig?.version || '0.0.0';
 const extra = (): any => Constants.expoConfig?.extra || {};
-export const releasesPage = (): string => `https://github.com/${extra().updateRepo || 'InM1nd/polka'}/releases/latest`;
+export const releasesPage = (): string => `https://github.com/${extra().updateRepo || 'InM1nd/grabbit'}/releases/latest`;
 export const updateSourceKind = () => pickSource(extra()).kind;
 
 export interface CheckResult { info: UpdateInfo; newer: boolean }

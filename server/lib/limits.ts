@@ -17,8 +17,11 @@ export function parseRoute(method: string, path: string): Route | null {
   return { kind: m[2] === 'generateContent' ? 'generate' : 'embed', upstreamPath: `models/${m[1]}:${m[2]}` };
 }
 
-export interface Limits { generatePerDevice: number; embedPerDevice: number; globalPerDay: number }
-export const DEFAULT_LIMITS: Limits = { generatePerDevice: 50, embedPerDevice: 100, globalPerDay: 3000 };
+export interface Limits {
+  generatePerDevice: number; embedPerDevice: number; globalPerDay: number;
+  globalEmbedPerDay: number; ipPerDay: number; ipPerMinute: number;
+}
+export const DEFAULT_LIMITS: Limits = { generatePerDevice: 50, embedPerDevice: 100, globalPerDay: 3000, globalEmbedPerDay: 10000, ipPerDay: 200, ipPerMinute: 20 };
 
 export function readLimits(env: Record<string, string | undefined>): Limits {
   const n = (v: string | undefined, d: number) => (v && Number(v) > 0 ? Number(v) : d);
@@ -26,6 +29,9 @@ export function readLimits(env: Record<string, string | undefined>): Limits {
     generatePerDevice: n(env.LIMIT_GENERATE_PER_DEVICE, DEFAULT_LIMITS.generatePerDevice),
     embedPerDevice: n(env.LIMIT_EMBED_PER_DEVICE, DEFAULT_LIMITS.embedPerDevice),
     globalPerDay: n(env.LIMIT_GLOBAL_PER_DAY, DEFAULT_LIMITS.globalPerDay),
+    globalEmbedPerDay: n(env.LIMIT_GLOBAL_EMBED_PER_DAY, DEFAULT_LIMITS.globalEmbedPerDay),
+    ipPerDay: n(env.LIMIT_IP_PER_DAY, DEFAULT_LIMITS.ipPerDay),
+    ipPerMinute: n(env.LIMIT_IP_PER_MINUTE, DEFAULT_LIMITS.ipPerMinute),
   };
 }
 
@@ -50,21 +56,28 @@ export const secondsToReset = (now: number) => Math.max(1, Math.ceil((Date.UTC(n
 
 export type Verdict =
   | { ok: true; used: number; limit: number }
-  | { ok: false; scope: 'device' | 'global'; used: number; limit: number; retryAfter: number };
+  | { ok: false; scope: 'device' | 'global' | 'ip' | 'burst'; used: number; limit: number; retryAfter: number };
 
-/** Count the request; 'models' (list) is free. Over-limit requests still count, which is fine. */
-export async function checkLimit(store: Store, deviceId: string, kind: Kind, limits: Limits, now = Date.now()): Promise<Verdict> {
+/**
+ * Count the request; 'models' (list) is free. Order: per-IP burst (minute), per-IP day, per-device day,
+ * global day per kind. Over-limit requests still count, which is fine.
+ */
+export async function checkLimit(store: Store, deviceId: string, kind: Kind, limits: Limits, now = Date.now(), ip = 'unknown'): Promise<Verdict> {
   if (kind === 'models') return { ok: true, used: 0, limit: 0 };
   const day = dayKey(now);
   const ttl = secondsToReset(now) + 60;
   const retryAfter = secondsToReset(now);
+  const minute = Math.floor(now / 60_000);
+  const burst = await store.incr(`ipm:${minute}:${ip}`, 120);
+  if (burst > limits.ipPerMinute) return { ok: false, scope: 'burst', used: burst, limit: limits.ipPerMinute, retryAfter: 60 - Math.floor((now % 60_000) / 1000) };
+  const ipDay = await store.incr(`ip:${day}:${ip}`, ttl);
+  if (ipDay > limits.ipPerDay) return { ok: false, scope: 'ip', used: ipDay, limit: limits.ipPerDay, retryAfter };
   const limit = kind === 'generate' ? limits.generatePerDevice : limits.embedPerDevice;
   const used = await store.incr(`d:${day}:${kind}:${deviceId}`, ttl);
   if (used > limit) return { ok: false, scope: 'device', used, limit, retryAfter };
-  if (kind === 'generate') {
-    const g = await store.incr(`g:${day}`, ttl);
-    if (g > limits.globalPerDay) return { ok: false, scope: 'global', used: g, limit: limits.globalPerDay, retryAfter };
-  }
+  const gLimit = kind === 'generate' ? limits.globalPerDay : limits.globalEmbedPerDay;
+  const g = await store.incr(kind === 'generate' ? `g:${day}` : `ge:${day}`, ttl);
+  if (g > gLimit) return { ok: false, scope: 'global', used: g, limit: gLimit, retryAfter };
   return { ok: true, used, limit };
 }
 
@@ -72,7 +85,9 @@ export function limitBody(v: Extract<Verdict, { ok: false }>) {
   return {
     error: {
       code: 429, status: 'RESOURCE_EXHAUSTED', reason: 'GRABBIT_LIMIT', scope: v.scope, limit: v.limit, retryAfterSec: v.retryAfter,
-      message: v.scope === 'device' ? `Daily AI limit reached (${v.limit}/day)` : 'Daily AI limit of the free server reached',
+      message: v.scope === 'device' ? `Daily AI limit reached (${v.limit}/day)`
+        : v.scope === 'burst' ? 'Too many requests, try again in a minute'
+        : v.scope === 'ip' ? 'Daily limit for this network reached' : 'Daily AI limit of the free server reached',
     },
   };
 }

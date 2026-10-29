@@ -13,14 +13,14 @@ const config: ExpoConfig = {
   name: 'Grabbit',
   slug: 'polka',
   scheme: 'pinbox',
-  version: '1.8.0',
+  version: '1.8.1',
   orientation: 'portrait',
   icon: './assets/icon.png',
   userInterfaceStyle: 'automatic',
   backgroundColor: '#FFFFFF',
   android: {
     package: 'com.zabolotny.polka',
-    versionCode: 16,
+    versionCode: 17,
     adaptiveIcon: {
       backgroundColor: '#F8483E',
       foregroundImage: './assets/android-icon-foreground.png',
@@ -75,7 +75,7 @@ const config: ExpoConfig = {
       { icon: './assets/notification-icon.png', color: '#F8483E', defaultChannel: 'reminders' },
     ],
   ],
-  extra: { aiProxyUrl, geminiApiKey, updateRepo: 'InM1nd/polka', updateToken, updateManifestUrl },
+  extra: { aiProxyUrl, geminiApiKey, updateRepo: 'InM1nd/grabbit', updateToken, updateManifestUrl },
 };
 
 export default config;
