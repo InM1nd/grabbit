@@ -3,7 +3,9 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { Image } from 'expo-image';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import type { MarkFilter, Post } from './src/db';
+import type { Post } from './src/db';
+import { applyFilter, DEFAULT_FILTER, type FeedFilter } from './src/core/filters';
+import { FilterSheet } from './src/ui/FilterSheet';
 import { DARK, LIGHT, ThemeContext } from './src/theme';
 import { FeedScreen } from './src/ui/FeedScreen';
 import { BottomNav } from './src/ui/BottomNav';
@@ -15,9 +17,9 @@ import { previewBoards, previewPosts } from './src/preview/data';
 function Preview() {
   const [dark, setDark] = useState(false);
   const [posts, setPosts] = useState(previewPosts);
-  const [boardId, setBoardId] = useState<number | null>(null);
   const [query, setQuery] = useState('');
-  const [markFilter, setMarkFilter] = useState<MarkFilter>('default');
+  const [filter, setFilter] = useState<FeedFilter>(DEFAULT_FILTER);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [detail, setDetail] = useState<Post | null>(null);
   const [deleted, setDeleted] = useState<Post | null>(null);
   const [tab, setTab] = useState<'feed' | 'boards'>('feed');
@@ -26,10 +28,9 @@ function Preview() {
   const c = dark ? DARK : LIGHT;
   const boards = previewBoards.map(board => ({ ...board, count: posts.filter(p => p.boardId === board.id).length,
     covers: posts.filter(p => p.boardId === board.id && p.image).map(p => p.image!) }));
-  const reset = () => { setPosts(previewPosts); setDeleted(null); setBoardId(null); setQuery(''); setMarkFilter('default'); setTab('feed'); };
-  const visible = posts.filter(p => (boardId == null || p.boardId === boardId)
-    && (markFilter === 'all' || (markFilter === 'default' ? p.mark !== 'skip' : p.mark === markFilter))
-    && `${p.title} ${p.summary} ${p.tags.join(' ')}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
+  const reset = () => { setPosts(previewPosts); setDeleted(null); setFilter(DEFAULT_FILTER); setQuery(''); setTab('feed'); };
+  const matched = posts.filter(p => `${p.title} ${p.summary} ${p.tags.join(' ')}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
+  const visible = applyFilter(matched, filter);
   const remove = (post: Post) => { setPosts(prev => prev.filter(p => p.id !== post.id)); setDeleted(post); };
 
   return <SafeAreaProvider><ThemeContext.Provider value={c}>
@@ -45,12 +46,12 @@ function Preview() {
         <TextInput accessibilityLabel="Поиск по сохранённым постам" placeholder="Найти в сохранённом" placeholderTextColor={c.faint} value={query} onChangeText={setQuery} style={[s.input, { color: c.text }]} />
       </View>}
       <View style={{ flex: 1, minHeight: 0 }}>
-      {tab === 'feed' ? <FeedScreen posts={visible} boards={boards} boardId={boardId} setBoardId={setBoardId} query={query}
-        markFilter={markFilter} setMarkFilter={setMarkFilter} onOpen={setDetail} onSwipeDelete={remove}
+      {tab === 'feed' ? <FeedScreen posts={visible} query={query}
+        filter={filter} onOpenFilters={() => setFiltersOpen(true)} onOpen={setDetail} onSwipeDelete={remove}
         onRefresh={() => { setPosts(previewPosts); setDeleted(null); }} refreshing={false} /> :
         <ScrollView contentContainerStyle={s.boards}>
           <Text style={[s.boardsIntro, { color: c.sub }]}>Всё сохранённое — по своим местам</Text>
-          <View style={s.boardGrid}>{boards.map(board => <Pressable key={board.id} accessibilityRole="button" accessibilityLabel={`Открыть доску ${board.name}`} onPress={() => { setBoardId(board.id); setQuery(''); setMarkFilter('all'); setTab('feed'); }} style={({ pressed }) => [s.board, { opacity: pressed ? 0.8 : 1 }]}>
+          <View style={s.boardGrid}>{boards.map(board => <Pressable key={board.id} accessibilityRole="button" accessibilityLabel={`Открыть доску ${board.name}`} onPress={() => { setFilter({ ...DEFAULT_FILTER, boards: [board.id] }); setQuery(''); setTab('feed'); }} style={({ pressed }) => [s.board, { opacity: pressed ? 0.8 : 1 }]}>
             <View style={[s.boardCover, { backgroundColor: c.card }]}>
               {board.covers[0] ? <Image source={{ uri: board.covers[0] }} contentFit="cover" style={StyleSheet.absoluteFill} /> : <Text style={{ fontSize: 40 }}>{board.emoji}</Text>}
               {board.covers[0] && <View style={[s.boardEmoji, { backgroundColor: c.bg }]}><Text style={{ fontSize: 20 }}>{board.emoji}</Text></View>}
@@ -61,6 +62,7 @@ function Preview() {
         </ScrollView>}
       </View>
       {deleted && <View style={[s.undo, { backgroundColor: c.text }]}><Text style={{ color: c.bg }}>Пост удалён</Text><Pressable accessibilityRole="button" onPress={() => { setPosts(prev => [...prev, deleted].sort((a, b) => a.id - b.id)); setDeleted(null); }}><Text style={{ color: dark ? '#F8483E' : '#FFACA5', fontWeight: '700' }}>Отменить</Text></Pressable></View>}
+      <FilterSheet visible={filtersOpen} filter={filter} posts={matched} boards={boards} onApply={(f) => { setFilter(f); setFiltersOpen(false); }} onClose={() => setFiltersOpen(false)} />
       <BottomNav tab={tab} onChange={setTab} onAdd={() => setAdding(true)} />
       <Modal visible={settingsOpen} animationType="none" onRequestClose={() => setSettingsOpen(false)}>
         <View style={[s.app, { backgroundColor: c.bg, width: '100%', maxWidth: 430, alignSelf: 'center' }]}>
@@ -84,7 +86,7 @@ function Preview() {
           url: input.url, title: new URL(input.url).hostname, image: null, localImage: null,
           platform: detectPlatform(input.url), boardId: input.boardId, note: input.note || null,
           tags: [], mark: null, author: null, summary: null, description: null, createdAt: Date.now(), openedAt: null };
-        setPosts(prev => [post, ...prev]); setBoardId(null); setQuery(''); setMarkFilter('default'); setTab('feed');
+        setPosts(prev => [post, ...prev]); setFilter(DEFAULT_FILTER); setQuery(''); setTab('feed');
         return post;
       }} />}
       {detail && <PostPanel key={detail.id} post={detail} boards={boards} onClose={() => setDetail(null)}

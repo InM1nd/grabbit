@@ -23,6 +23,8 @@ import { BoardsScreen } from './src/ui/BoardsScreen';
 import { ActionSheet, IconBtn, MARK_ICON, markLabel } from './src/ui/common';
 import { DetailScreen } from './src/ui/DetailScreen';
 import { FeedScreen } from './src/ui/FeedScreen';
+import { FilterSheet } from './src/ui/FilterSheet';
+import { applyFilter, DEFAULT_FILTER, type FeedFilter } from './src/core/filters';
 import { HiddenInstagramLoader, InstagramLoginModal } from './src/ui/InstagramWeb';
 import { SaveOverlay, type SaveState } from './src/ui/SaveOverlay';
 import { SettingsScreen } from './src/ui/SettingsScreen';
@@ -56,13 +58,17 @@ function Main() {
   const dialog = useDialog();
   const { hasShareIntent, shareIntent, resetShareIntent } = useShareIntent({ resetOnBackground: true });
   const [tab, setTab] = useState<Tab>('feed');
-  const [boardId, setBoardId] = useState<number | null>(null);
+  // Feed filters live for the whole session (App stays mounted).
+  const [filter, setFilter] = useState<FeedFilter>(DEFAULT_FILTER);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [basePosts, setBasePosts] = useState<db.Post[]>([]);
+  const boardId = filter.boards.length === 1 ? filter.boards[0] : null;
+  const setBoardId = useCallback((id: number | null) => setFilter((f) => ({ ...f, boards: id == null ? [] : [id] })), []);
   const [query, setQuery] = useState('');
   const [searching, setSearching] = useState(false);
   const [debQuery, setDebQuery] = useState('');
   const [semantic, setSemantic] = useState(true);
   const [semActive, setSemActive] = useState(false);
-  const [markFilter, setMarkFilter] = useState<db.MarkFilter>('default');
   const [markPost, setMarkPost] = useState<db.Post | null>(null);
   const offlineWarned = useRef(false);
   useEffect(() => { const h = setTimeout(() => setDebQuery(query), query ? 450 : 0); return () => clearTimeout(h); }, [query]);
@@ -97,28 +103,29 @@ function Main() {
   // ---------- data ----------
   const reload = useCallback(async () => {
     const q = debQuery.trim();
-    const [textHits, b, all, n] = await Promise.all([db.listPosts({ boardId, query: q, mark: markFilter }), db.listBoards(), db.listPosts(), db.countPending()]);
-    let p = textHits;
+    const [textHits, b, all, n] = await Promise.all([db.listPosts({ query: q }), db.listBoards(), db.listPosts(), db.countPending()]);
+    let base = textHits;
     let sem = false;
     if (q && semantic) {
-      const pool = all.filter((x) => (boardId == null || x.boardId === boardId) && db.markAllowed(x.mark, markFilter));
-      const hits = await semanticSearch(q, pool);
+      const hits = await semanticSearch(q, all);
       if (hits) {
         sem = true;
         // meaning-ranked first, then exact text matches the embedding missed
         const ids = new Set(hits.map((x) => x.id));
-        p = [...hits, ...textHits.filter((x) => !ids.has(x.id))];
+        base = [...hits, ...textHits.filter((x) => !ids.has(x.id))];
       } else if (!offlineWarned.current) {
         offlineWarned.current = true;
         toast(t('Поиск по смыслу недоступен — ищу по словам'));
       }
     }
+    const p = applyFilter(base, filter, sem);
+    setBasePosts(base);
     setSemActive(sem);
     setPosts((prev) => reuseUnchanged(prev, p));
     setBoards(b);
     setUnsorted(all.filter((x) => x.boardId == null).length);
     setPending(n);
-  }, [boardId, debQuery, semantic, markFilter, toast]);
+  }, [filter, debQuery, semantic, toast]);
   useEffect(() => { const timer = setTimeout(() => { void reload(); }, 0); return () => clearTimeout(timer); }, [reload]);
   useEffect(() => {
     let t: ReturnType<typeof setTimeout> | null = null;
@@ -215,12 +222,13 @@ function Main() {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       if (saveState) { finishShare(); return true; }
       if (searching) { setSearching(false); setQuery(''); return true; }
+      if (filtersOpen) { setFiltersOpen(false); return true; }
       if (boardId != null) { setBoardId(null); return true; }
       if (tab !== 'feed') { setTab('feed'); return true; }
       return false;
     });
     return () => sub.remove();
-  }, [saveState, searching, boardId, tab, finishShare]);
+  }, [saveState, searching, boardId, filtersOpen, setBoardId, tab, finishShare]);
 
   const openAdd = async () => {
     let clip = '';
@@ -233,7 +241,7 @@ function Main() {
     if (r.status === 'duplicate') throw new Error(t('Уже сохранено'));
     const post = await db.getPost(r.id);
     if (!post) throw new Error(t('Не удалось сохранить. Попробуй ещё раз.'));
-    setTab('feed'); setBoardId(null); setQuery(''); setMarkFilter('default');
+    setTab('feed'); setBoardId(null); setQuery(''); setFilter(DEFAULT_FILTER);
     processQueue(r.id).then(rescheduleReminder).catch(() => {});
     ensurePermission().catch(() => {});
     return post;
@@ -289,13 +297,15 @@ function Main() {
 
       <View style={{ flex: 1 }}>
         {tab === 'feed' ? (
-          <FeedScreen posts={visiblePosts} boards={boards} boardId={boardId} setBoardId={setBoardId} query={debQuery} semantic={semActive}
-            markFilter={markFilter} setMarkFilter={setMarkFilter} onLongPress={setMarkPost}
+          <FeedScreen posts={visiblePosts} query={debQuery} semantic={semActive}
+            filter={filter} onOpenFilters={() => setFiltersOpen(true)} onLongPress={setMarkPost}
             onOpen={openPost} onSwipeDelete={swipeDelete}
             onRefresh={async () => { setRefreshing(true); await retryAllNow(); await reload(); setRefreshing(false); }} refreshing={refreshing} />
         ) : (
           <BoardsScreen boards={boards} unsortedCount={unsorted} onOpenBoard={(id) => { setBoardId(id); setTab('feed'); }} />
         )}
+      <FilterSheet visible={filtersOpen} filter={filter} posts={basePosts} boards={boards}
+        onApply={(f) => { setFilter(f); setFiltersOpen(false); }} onClose={() => setFiltersOpen(false)} />
       </View>
 
       <BottomNav tab={tab} onChange={setTab} onAdd={openAdd} bottomInset={insets.bottom} />

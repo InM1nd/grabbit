@@ -1,20 +1,18 @@
 import React from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
-import type { Board, MarkFilter, Post } from '../db';
+import { StyleSheet, Text, View } from 'react-native';
+import type { Post } from '../db';
+import { activeCount, type FeedFilter } from '../core/filters';
+import { FilterButton } from './FilterSheet';
 import { useColors } from '../theme';
-import { Chip, markLabel } from './common';
 import { Masonry } from './Masonry';
 import { t } from '../i18n';
 
 interface Props {
   posts: Post[];
-  boards: Board[];
-  boardId: number | null;
-  setBoardId: (id: number | null) => void;
   query: string;
   semantic?: boolean;
-  markFilter: MarkFilter;
-  setMarkFilter: (f: MarkFilter) => void;
+  filter: FeedFilter;
+  onOpenFilters: () => void;
   onLongPress?: (p: Post) => void;
   onOpen: (p: Post) => void;
   onSwipeDelete: (p: Post) => void;
@@ -22,38 +20,20 @@ interface Props {
   refreshing: boolean;
 }
 
-export function FeedScreen({ posts, boards, boardId, setBoardId, query, semantic, markFilter, setMarkFilter, onLongPress, onOpen, onSwipeDelete, onRefresh, refreshing }: Props) {
+export function FeedScreen({ posts, query, semantic, filter, onOpenFilters, onLongPress, onOpen, onSwipeDelete, onRefresh, refreshing }: Props) {
   const c = useColors();
-  const markChips: { f: MarkFilter; label: string }[] = [
-    { f: 'try', label: `🧪 ${markLabel('try')}` },
-    { f: 'done', label: `✅ ${markLabel('done')}` },
-    { f: 'skip', label: `💤 ${markLabel('skip')}` },
-    { f: 'all', label: t('Показать все') },
-  ];
   const header = (
     <>
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips} keyboardShouldPersistTaps="handled">
-      <Chip label={boardId == null ? `${t('Все')} · ${posts.length}` : t('Все')} active={boardId == null} onPress={() => setBoardId(null)} />
-      {boards.map((b) => (
-        <Chip
-          key={b.id}
-          label={`${b.emoji ? b.emoji + ' ' : ''}${b.name}${b.id === boardId ? ` · ${posts.length}` : ''}`}
-          active={b.id === boardId}
-          onPress={() => setBoardId(b.id === boardId ? null : b.id)}
-        />
-      ))}
-    </ScrollView>
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.marks} keyboardShouldPersistTaps="handled">
-      {markChips.map((m) => (
-        <Chip key={m.f} label={m.label} active={markFilter === m.f} onPress={() => setMarkFilter(markFilter === m.f ? 'default' : m.f)} />
-      ))}
-    </ScrollView>
+    <View style={styles.bar}>
+      <Text style={[styles.count, { color: c.sub }]}>{t('Постов: {n}', { n: posts.length })}</Text>
+      <FilterButton filter={filter} onPress={onOpenFilters} />
+    </View>
     {!!query && semantic && <Text style={[styles.hint, { color: c.sub }]}>{t('✨ Поиск по смыслу — самые близкие сверху')}</Text>}
     </>
   );
   const empty = (
     <View style={styles.empty}>
-      {!query && markFilter !== 'default' ? (
+      {!query && activeCount(filter) > 0 ? (
         <>
           <Text style={[styles.emptyTitle, { color: c.text }]}>{t('Здесь пока ничего')}</Text>
           <Text style={[styles.emptyText, { color: c.sub }]}>{t('Долгое нажатие на карточку — отметить «Попробовать», «Сделано» или «Неважно».')}</Text>
@@ -77,8 +57,8 @@ export function FeedScreen({ posts, boards, boardId, setBoardId, query, semantic
 }
 
 const styles = StyleSheet.create({
-  chips: { paddingHorizontal: 14, paddingTop: 4, paddingBottom: 8, gap: 8 },
-  marks: { paddingHorizontal: 14, paddingBottom: 14, gap: 8 },
+  bar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 2, paddingBottom: 12 },
+  count: { fontSize: 13.5, fontWeight: '500' },
   hint: { fontSize: 13, paddingHorizontal: 18, marginTop: -6, marginBottom: 10 },
   empty: { alignItems: 'center', paddingHorizontal: 40, paddingTop: 90 },
   emptyTitle: { fontSize: 20, fontWeight: '700', textAlign: 'center' },

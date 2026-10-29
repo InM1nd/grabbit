@@ -264,6 +264,19 @@ const T: [string, string, string][] = [
   ['Выйти из Instagram', 'Log out of Instagram', 'Вийти з Instagram'],
   ['Необязательно. Нужен только для закрытых постов — публичные читаются без входа. Вход на официальной странице, пароль мы не видим, cookie только на телефоне.', 'Optional. Only needed for private posts — public ones are read without logging in. Login is on the official page, we never see your password, cookies stay on the phone.', 'Необовʼязково. Потрібен лише для закритих постів — публічні читаються без входу. Вхід на офіційній сторінці, пароль ми не бачимо, cookie лише на телефоні.'],
   ['Удалить сессию и cookie с телефона', 'Delete the session and cookies from the phone', 'Видалити сесію та cookie з телефона'],
+  // 1.8.0 feed filters
+  ['Фильтры', 'Filters', 'Фільтри'],
+  ['Статус', 'Status', 'Статус'],
+  ['Источник', 'Source', 'Джерело'],
+  ['Сортировка', 'Sort', 'Сортування'],
+  ['Сначала новые', 'Newest first', 'Спочатку нові'],
+  ['Сначала старые', 'Oldest first', 'Спочатку старі'],
+  ['Сбросить', 'Reset', 'Скинути'],
+  ['Показать {n}', 'Show {n}', 'Показати {n}'],
+  ['Ничего нет', 'Nothing here', 'Нічого немає'],
+  ['Другое', 'Other', 'Інше'],
+  ['Постов: {n}', 'Posts: {n}', 'Постів: {n}'],
+  ['Без отметки «Неважно» — пока её не выберешь', '“Not important” stays hidden unless you pick it', '«Неважливо» приховано, доки не обереш'],
 ];
 
 const DICT: Record<'en' | 'uk', Map<string, string>> = { en: new Map(), uk: new Map() };
