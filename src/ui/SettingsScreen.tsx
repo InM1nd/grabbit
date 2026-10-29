@@ -1,6 +1,7 @@
+import { useDialog } from './dialog';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Linking, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { ActivityIndicator, Linking, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { exportBackup, importBackup } from '../backup';
 import { GEMINI_MODELS } from '../core/ai';
@@ -24,6 +25,7 @@ interface Props {
 }
 
 export function SettingsScreen({ visible, onClose, boards, pendingCount, toast, onInstagram, initialUpdate }: Props) {
+  const dialog = useDialog();
   const c = useColors();
   const s = useSettings();
   const insets = useSafeAreaInsets();
@@ -52,10 +54,10 @@ export function SettingsScreen({ visible, onClose, boards, pendingCount, toast, 
       setUpd((u) => ({ ...u, progress: null }));
     } catch (e: any) {
       setUpd((u) => ({ ...u, progress: null }));
-      Alert.alert(t('Обновление'), t('Не удалось скачать: {e}', { e: String(e?.message || e) }), [
-        { text: t('Отмена'), style: 'cancel' },
-        { text: t('Открыть в браузере'), onPress: () => Linking.openURL(info.pageUrl || releasesPage()) },
-      ]);
+      dialog.info({ title: t('Обновление'), message: t('Не удалось скачать: {e}', { e: String(e?.message || e) }), danger: true, buttons: [
+        { label: t('Открыть в браузере'), primary: true, onPress: () => Linking.openURL(info.pageUrl || releasesPage()) },
+        { label: t('Отмена') },
+      ] });
     }
   };
   useEffect(() => { if (visible && initialUpdate) setUpd({ info: initialUpdate, newer: true, sub: t('Есть новая версия') }); }, [visible, initialUpdate]);
@@ -149,13 +151,11 @@ export function SettingsScreen({ visible, onClose, boards, pendingCount, toast, 
               <Ionicons name="share-outline" size={18} color={c.faint} />
             </Row>
             <Row label={t('Импорт из JSON')} sub={t('Существующие ссылки не дублируются')} onPress={async () => {
-              try { const r = await importBackup(); if (r) { toast(t('Добавлено {a}, пропущено {s}', { a: r.added, s: r.skipped })); processQueue(); } } catch (e: any) { Alert.alert(t('Импорт'), e?.message || t('Не вышло')); }
+              try { const r = await importBackup(); if (r) { toast(t('Добавлено {a}, пропущено {s}', { a: r.added, s: r.skipped })); processQueue(); } } catch (e: any) { dialog.info({ title: t('Импорт'), message: e?.message || t('Не вышло'), danger: true }); }
             }}>
               <Ionicons name="download-outline" size={18} color={c.faint} />
             </Row>
-            <Row label={t('Очистить кэш превью')} onPress={() => Alert.alert(t('Очистить кэш превью?'), t('Картинки будут грузиться из сети заново.'), [
-              { text: t('Отмена'), style: 'cancel' }, { text: t('Очистить'), style: 'destructive', onPress: async () => { await clearThumbCache(); toast(t('Кэш очищен')); } },
-            ])}>
+            <Row label={t('Очистить кэш превью')} onPress={async () => { if (await dialog.confirm({ title: t('Очистить кэш превью?'), message: t('Картинки будут грузиться из сети заново.'), confirmLabel: t('Очистить'), danger: true, icon: 'images-outline' })) { await clearThumbCache(); toast(t('Кэш очищен')); } }}>
               <Ionicons name="trash-outline" size={18} color={c.faint} />
             </Row>
           </Section>
@@ -179,7 +179,7 @@ export function SettingsScreen({ visible, onClose, boards, pendingCount, toast, 
             </Row>
           </Section>
 
-          <Text style={[styles.about, { color: c.faint }]}>Pinbox {currentVersion()} · {t('Данные хранятся только на телефоне')}</Text>
+          <Text style={[styles.about, { color: c.faint }]}>Grabbit {currentVersion()} · {t('Данные хранятся только на телефоне')}</Text>
         </ScrollView>
       </View>
       <ActionSheet visible={boardPick} title={t('Доска по умолчанию')} onClose={() => setBoardPick(false)} actions={[

@@ -8,19 +8,19 @@ const updateToken = (process.env.PINBOX_UPDATE_TOKEN || '').trim();
 const updateManifestUrl = (process.env.PINBOX_UPDATE_MANIFEST_URL || '').trim();
 
 const config: ExpoConfig = {
-  name: 'Pinbox',
+  name: 'Grabbit',
   slug: 'polka',
   scheme: 'pinbox',
-  version: '1.3.2',
+  version: '1.4.0',
   orientation: 'portrait',
   icon: './assets/icon.png',
   userInterfaceStyle: 'automatic',
   backgroundColor: '#FFFFFF',
   android: {
     package: 'com.zabolotny.polka',
-    versionCode: 7,
+    versionCode: 8,
     adaptiveIcon: {
-      backgroundColor: '#18181B',
+      backgroundColor: '#F8483E',
       foregroundImage: './assets/android-icon-foreground.png',
       backgroundImage: './assets/android-icon-background.png',
       monochromeImage: './assets/android-icon-monochrome.png',
@@ -69,7 +69,7 @@ const config: ExpoConfig = {
     ],
     [
       'expo-notifications',
-      { icon: './assets/notification-icon.png', color: '#EF4444', defaultChannel: 'reminders' },
+      { icon: './assets/notification-icon.png', color: '#F8483E', defaultChannel: 'reminders' },
     ],
   ],
   extra: { geminiApiKey, updateRepo: 'InM1nd/polka', updateToken, updateManifestUrl },

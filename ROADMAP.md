@@ -1,4 +1,4 @@
-# Pinbox — Roadmap
+# Grabbit — Roadmap
 
 ## Следующий апдейт
 - [x] Проверка и установка обновлений из настроек (через GitHub Releases) — 1.2.0

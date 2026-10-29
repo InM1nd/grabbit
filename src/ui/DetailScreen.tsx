@@ -1,8 +1,9 @@
+import { useDialog } from './dialog';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as Clipboard from 'expo-clipboard';
 import { Image } from 'expo-image';
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Linking, Modal, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Linking, Modal, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PLATFORM_LABEL } from '../core/url';
 import * as db from '../db';
@@ -25,6 +26,7 @@ interface Props {
 }
 
 export function DetailScreen({ postId, boards, onClose, toast, onConnectInstagram, onOpenPost }: Props) {
+  const dialog = useDialog();
   const c = useColors();
   const st = useSettings();
   const insets = useSafeAreaInsets();
@@ -65,10 +67,13 @@ export function DetailScreen({ postId, boards, onClose, toast, onConnectInstagra
   const needsHelp = !!post && post.status !== 'pending' && (post.unavailable || post.status === 'error' || (post.metaBlocked && !post.note));
 
   const openOriginal = async () => { if (post) try { await Linking.openURL(post.url); } catch { toast(t('Не удалось открыть ссылку')); } };
-  const remove = () => post && Alert.alert(t('Удалить пост?'), t('Он пропадёт из ленты и досок.'), [
-    { text: t('Отмена'), style: 'cancel' },
-    { text: t('Удалить'), style: 'destructive', onPress: async () => { deleteThumb(post.id); await db.deletePost(post.id); onClose(); toast(t('Удалено')); } },
-  ]);
+  const remove = async () => {
+    if (!post) return;
+    const ok = await dialog.confirm({ title: t('Удалить пост?'), message: t('Он пропадёт из ленты и досок.'), confirmLabel: t('Удалить'), danger: true,
+      preview: { image: img, title: post.aiTitle || post.title || post.url, sub: [post.platform, board ? `${board.emoji ?? ''} ${board.name}`.trim() : ''].filter(Boolean).join(' · ') } });
+    if (!ok) return;
+    deleteThumb(post.id); await db.deletePost(post.id); onClose(); toast(t('Удалено'));
+  };
   const setBoard = async (id: number | null) => { if (post) await db.updatePost(post.id, { board_id: id }); setPickBoard(false); };
   const addTag = async () => {
     const t = tagInput.trim().toLowerCase().replace(/^#/, '');
@@ -154,7 +159,7 @@ export function DetailScreen({ postId, boards, onClose, toast, onConnectInstagra
 
               <View style={[styles.row, { flexWrap: 'wrap', gap: 8, marginTop: 12 }]}>
                 <Chip label={board ? `${board.emoji ?? '📌'} ${board.name}` : t('＋ Доска')} active onPress={() => setPickBoard(true)} />
-                {post.tags.map((tag) => <Chip key={tag} label={`#${tag}`} onLongPress={() => removeTag(tag)} onPress={() => Alert.alert(`#${tag}`, undefined, [{ text: t('Отмена'), style: 'cancel' }, { text: t('Удалить тег'), style: 'destructive', onPress: () => removeTag(tag) }])} />)}
+                {post.tags.map((tag) => <Chip key={tag} label={`#${tag}`} onLongPress={() => removeTag(tag)} onPress={async () => { if (await dialog.confirm({ title: `#${tag}`, confirmLabel: t('Удалить тег'), danger: true, icon: 'pricetag-outline' })) removeTag(tag); }} />)}
                 <TextInput value={tagInput} onChangeText={setTagInput} placeholder={t('+ тег')} placeholderTextColor={c.faint} onSubmitEditing={addTag} blurOnSubmit={false} returnKeyType="done"
                   style={[styles.tagInput, { color: c.text, backgroundColor: c.chip }]} />
               </View>

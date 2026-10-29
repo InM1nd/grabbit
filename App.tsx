@@ -1,3 +1,4 @@
+import { DialogProvider } from './src/ui/dialog';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import NetInfo from '@react-native-community/netinfo';
 import * as Clipboard from 'expo-clipboard';
@@ -35,7 +36,7 @@ export default function App() {
     <SafeAreaProvider>
       <ThemeContext.Provider value={pal}>
         <StatusBar style={dark ? 'light' : 'dark'} />
-        <Main key={lang} />
+        <DialogProvider><Main key={lang} /></DialogProvider>
       </ThemeContext.Provider>
     </SafeAreaProvider>
   );
@@ -244,7 +245,7 @@ function Main() {
         ) : (
           <>
             <Text style={[styles.logo, { color: c.text }]} numberOfLines={1}>
-              {tab === 'boards' ? t('Доски') : currentBoard ? `${currentBoard.emoji ?? ''} ${currentBoard.name}`.trim() : 'Pinbox'}
+              {tab === 'boards' ? t('Доски') : currentBoard ? `${currentBoard.emoji ?? ''} ${currentBoard.name}`.trim() : 'Grabbit'}
             </Text>
             {tab === 'feed' && <IconBtn name="search" onPress={() => setSearching(true)} label={t('Поиск')} />}
             <IconBtn name="settings-outline" onPress={() => setSettingsOpen(true)} label={t('Настройки')} />

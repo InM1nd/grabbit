@@ -67,7 +67,7 @@ export function FeedScreen({ posts, boards, boardId, setBoardId, query, semantic
         <>
           <Text style={[styles.emptyTitle, { color: c.text }]}>{t('Пока пусто')}</Text>
           <Text style={[styles.emptyText, { color: c.sub }]}>
-            {t('В Instagram, TikTok, YouTube или X нажми «Поделиться» → Pinbox. ИИ опишет пост и положит на доску.')}
+            {t('В Instagram, TikTok, YouTube или X нажми «Поделиться» → Grabbit. ИИ опишет пост и положит на доску.')}
           </Text>
         </>
       )}

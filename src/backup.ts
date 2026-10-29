@@ -34,8 +34,8 @@ export async function buildBackup(): Promise<BackupFile> {
 
 /** Validate a parsed backup; throws a Russian message on bad input. */
 export function validateBackup(x: any): BackupFile {
-  if (!x || typeof x !== 'object' || !Array.isArray(x.posts)) throw new Error(t('Это не файл экспорта Pinbox'));
-  if (x.app !== 'pinbox' && x.app !== 'polka') throw new Error(t('Файл не от Pinbox'));
+  if (!x || typeof x !== 'object' || !Array.isArray(x.posts)) throw new Error(t('Это не файл экспорта Grabbit'));
+  if (x.app !== 'pinbox' && x.app !== 'polka') throw new Error(t('Файл не от Grabbit'));
   x.boards = Array.isArray(x.boards) ? x.boards : [];
   x.posts = x.posts.filter((p: any) => p && typeof p.url === 'string' && /^https?:\/\//.test(p.url));
   return x as BackupFile;
@@ -48,7 +48,7 @@ export async function exportBackup(): Promise<number> {
   if (f.exists) f.delete();
   f.create();
   f.write(JSON.stringify(data, null, 1));
-  await Sharing.shareAsync(f.uri, { mimeType: 'application/json', dialogTitle: t('Экспорт Pinbox') });
+  await Sharing.shareAsync(f.uri, { mimeType: 'application/json', dialogTitle: t('Экспорт Grabbit') });
   return data.posts.length;
 }
 

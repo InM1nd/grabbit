@@ -1,7 +1,8 @@
+import { useDialog } from './dialog';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { Image } from 'expo-image';
 import React, { useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import * as db from '../db';
 import { useColors } from '../theme';
 import { ActionSheet, PromptModal } from './common';
@@ -10,6 +11,7 @@ import { t } from '../i18n';
 interface Props { boards: db.Board[]; unsortedCount: number; onOpenBoard: (id: number | null) => void }
 
 export function BoardsScreen({ boards, unsortedCount, onOpenBoard }: Props) {
+  const dialog = useDialog();
   const c = useColors();
   const { width } = useWindowDimensions();
   const w = Math.floor((width - 28 - 14) / 2);
@@ -43,10 +45,7 @@ export function BoardsScreen({ boards, unsortedCount, onOpenBoard }: Props) {
           { label: t('Переименовать'), icon: 'create-outline', onPress: () => setRenaming(menu) },
           {
             label: t('Удалить доску'), icon: 'trash-outline', destructive: true,
-            onPress: () => Alert.alert(t('Удалить доску?'), t('Посты останутся в ленте, просто без доски.'), [
-              { text: t('Отмена'), style: 'cancel' },
-              { text: t('Удалить'), style: 'destructive', onPress: () => db.deleteBoard(menu.id) },
-            ]),
+            onPress: async () => { if (await dialog.confirm({ title: t('Удалить доску?'), message: t('Посты останутся в ленте, просто без доски.'), confirmLabel: t('Удалить'), danger: true })) db.deleteBoard(menu.id); },
           },
         ] : []}
       />

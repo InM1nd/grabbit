@@ -1,4 +1,4 @@
-# Pinbox
+# Grabbit
 
 Android-приложение (Expo SDK 57 / React Native, TypeScript) — органайзер постов из соцсетей в стиле Pinterest. Название английское, интерфейс на русском.
 

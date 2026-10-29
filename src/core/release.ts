@@ -10,7 +10,7 @@ export interface UpdateInfo {
   pageUrl: string | null;
 }
 
-/** "v1.2.0" / "1.2" / "Pinbox 1.10.3-beta" → [1,2,0] */
+/** "v1.2.0" / "1.2" / "Grabbit 1.10.3-beta" → [1,2,0] */
 export function parseVersion(v: string): number[] {
   const m = String(v || '').match(/(\d+)(?:\.(\d+))?(?:\.(\d+))?/);
   if (!m) return [0, 0, 0];
@@ -41,14 +41,14 @@ export function fromGithubRelease(rel: any, viaApi: boolean): UpdateInfo | null 
   };
 }
 
-/** Public manifest: {"version":"1.2.0","apkUrl":"https://…/Pinbox-v1.2.0.apk","notes":"…","size":123} */
+/** Public manifest: {"version":"1.2.0","apkUrl":"https://…/Grabbit-v1.2.0.apk","notes":"…","size":123} */
 export function fromManifest(m: any): UpdateInfo | null {
   if (!m || typeof m !== 'object' || !m.version || !/^https:\/\//.test(m.apkUrl || '')) return null;
   return {
     version: String(m.version).replace(/^v/i, ''),
     notes: String(m.notes || '').trim(),
     apkUrl: m.apkUrl,
-    apkName: String(m.apkUrl).split('/').pop() || 'Pinbox.apk',
+    apkName: String(m.apkUrl).split('/').pop() || 'Grabbit.apk',
     size: typeof m.size === 'number' ? m.size : null,
     needsAuth: false,
     pageUrl: m.pageUrl || null,

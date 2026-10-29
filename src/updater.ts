@@ -40,7 +40,7 @@ export async function downloadAndInstall(info: UpdateInfo, onProgress?: (fractio
   try {
     const dest = `${FS.cacheDirectory}updates/`;
     await FS.makeDirectoryAsync(dest, { intermediates: true }).catch(() => {});
-    const file = `${dest}Pinbox-v${info.version}.apk`;
+    const file = `${dest}Grabbit-v${info.version}.apk`;
     await FS.deleteAsync(file, { idempotent: true }).catch(() => {});
     const headers: Record<string, string> = {};
     if (info.needsAuth) {

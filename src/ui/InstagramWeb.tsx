@@ -93,7 +93,7 @@ export function InstagramLoginModal({ visible, mode, onClose, onResult }: LoginP
         </View>
         {mode === 'login' && (
           <Text style={[styles.hint, { color: c.sub }]}>
-            {t('Логин идёт прямо на instagram.com — Pinbox не видит пароль. Сессия хранится только на телефоне и нужна, чтобы читать посты закрытых аккаунтов, на которые ты подписан.')}
+            {t('Логин идёт прямо на instagram.com — Grabbit не видит пароль. Сессия хранится только на телефоне и нужна, чтобы читать посты закрытых аккаунтов, на которые ты подписан.')}
           </Text>
         )}
         {visible && (
