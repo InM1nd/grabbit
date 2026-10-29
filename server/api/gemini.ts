@@ -1,4 +1,4 @@
-import { checkLimit, DEVICE_RE, limitBody, MemoryStore, parseRoute, readLimits, type Store } from '../lib/limits';
+import { checkLimit, DEVICE_RE, limitBody, MemoryStore, parseRoute, readLimits, type Store } from '../lib/limits.js';
 
 const UPSTREAM = 'https://generativelanguage.googleapis.com/v1beta/';
 const json = (status: number, body: unknown, extra: Record<string, string> = {}) =>
