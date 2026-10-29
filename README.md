@@ -1,105 +1,22 @@
 # Grabbit
 
-Android-приложение (Expo SDK 57 / React Native, TypeScript) — органайзер постов из соцсетей в стиле Pinterest. Название английское, интерфейс на русском.
+Grabbit is an Android app for saving posts from Instagram, TikTok, YouTube, X, Reddit and any website, Pinterest-style. Share a link to Grabbit and it is saved in one tap. The app fetches a preview, and AI (Google Gemini) writes a short description, adds tags and files the post on a board. Everything is stored on your phone.
 
-## Что умеет
-- Появляется в меню «Поделиться»: ссылка из Instagram, TikTok, YouTube/Shorts, X, Reddit или с любого сайта сохраняется сразу. Внизу появляется строка «Сохранено → доска · Изменить», затем приложение возвращает тебя назад (задержку можно настроить).
-- Подтягивает превью: oEmbed / OpenGraph / JSON-LD / embed-страницы. Если сайт закрыл доступ, ссылка всё равно сохраняется.
-- Gemini пишет короткое описание (на русском, английском или языке поста), ставит теги и кладёт пост на доску: существующую или новую. Если подпись пустая, может разобрать картинку превью.
-- **Закрытые посты Instagram**: в настройках есть «Войти в Instagram» (обычный вход через WebView, cookie хранятся только на телефоне). Если пост недоступен публично, приложение открывает его в скрытом WebView с твоей сессией, достаёт подпись, автора и превью (API / встроенный JSON / og-теги / DOM) и отдаёт ИИ. Запасной вариант — заметка к посту.
-- Без сети пост встаёт в очередь, ИИ-обработка повторяется с backoff.
-- Минималистичная лента-плитка: свайп влево удаляет (с «Отменить»). Ещё есть доски, поиск по заголовку, описанию, тегам и заметкам, карточка поста.
-- Настройки:
-  - тема (системная / светлая / тёмная);
-  - ИИ вкл/выкл, язык описаний, анализ превью;
-  - доска по умолчанию;
-  - автовозврат;
-  - напоминания (время, частота, возраст поста);
-  - Instagram;
-  - экспорт и импорт JSON;
-  - очистка кэша.
-- Языки интерфейса: русский, английский, украинский (в настройках: системный / RU / EN / UK). Язык ИИ-описаний настраивается отдельно.
-- Обновления из настроек: «Проверить обновления» смотрит последний релиз на GitHub, скачивает APK и открывает системный установщик. Можно включить проверку при запуске. Репозиторий приватный, поэтому для работы внутри приложения нужен один из вариантов (env при сборке):
-  - `PINBOX_UPDATE_TOKEN` — fine-grained токен только с правом «Contents: Read-only» на этот репозиторий;
-  - `PINBOX_UPDATE_MANIFEST_URL` — публичный JSON `{"version","apkUrl","notes"}`.
-  Без них кнопка открывает страницу релизов в браузере.
-- Всё хранится только на телефоне (SQLite).
+Built with Expo / React Native and TypeScript. UI languages: Russian, English, Ukrainian.
 
-## Структура
-- `src/core/` — логика без React Native (url, metadata, ai, igExtract), её можно тестировать в node.
-- `src/db.ts` — SQLite.
-- `src/processor.ts` — очередь: метаданные → сессия Instagram → кэш превью → Gemini.
-- `src/settings.ts` — настройки.
-- `src/reminders.ts` — уведомления.
-- `src/backup.ts` — экспорт и импорт.
-- `src/igSession.ts` и `src/ui/InstagramWeb.tsx` — вход в Instagram и скрытый загрузчик.
-- `src/ui/` — экраны.
-- `App.tsx` — корень приложения, приём share-intent.
-- `tests/` — тесты извлечения из Instagram на сохранённом HTML/JSON.
-- `scripts/test-pipeline.ts` — проверка метаданных и Gemini на реальных ссылках.
-- `scripts/inject-smoke.ts` — прогон инжект-скрипта в headless Chrome.
-- `scripts/configure-android.sh` — настройки gradle после prebuild: подпись, R8, только arm64, сжатые .so.
+## Features
+- Save from the system **Share** menu: links, or screenshots that AI reads for you.
+- Previews from oEmbed, OpenGraph, JSON-LD and embed pages.
+- AI titles, descriptions, tags, board suggestions and semantic search via a small rate-limited proxy (`server/`). You can also use your own Gemini key.
+- Optional Instagram login, only for private posts. It happens on the official instagram.com page, and the session stays on the phone.
+- Boards, search, notes, reminders, JSON export/import, light and dark themes.
+- In-app updates from this repository's GitHub Releases.
 
-## Подготовка
-Нужны Node 20+ (SQLite-тесты требуют Node 22.13+, на Node 20 они пропускаются), JDK 17 и Android SDK (platform 36, build-tools 36, NDK 27).
-```bash
-npm install
-cp .env.example .env          # впиши GEMINI_API_KEY
-export $(grep -v '^#' .env | xargs)
-```
-Ключ подписи положи в `keystore/` (см. `keystore/README.md`).
+## Privacy
+See [docs/PRIVACY.md](docs/PRIVACY.md). There are no accounts, ads or analytics.
 
-## Песочница дизайна в браузере
+## Development
+Developer notes (in Russian) are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). Release history is in [RELEASE_NOTES.md](RELEASE_NOTES.md).
 
-```bash
-npm ci
-npm run web
-```
-
-`App.web.tsx` открывает мобильное превью с тестовыми постами из `src/preview/data.ts`.
-Лента использует настоящие `FeedScreen`, `Masonry` и `PostCard`: изменения этих компонентов видны в превью.
-Работают поиск по словам, фильтры досок и отметок, смена темы, открытие демонстрационной карточки,
-свайп для удаления и отмена. «Сбросить демо» восстанавливает исходное состояние.
-Снизу — плавающая панель `BottomNav`: «Лента» и «Доски», перемещающийся акцент
-активной вкладки и кнопка «+» по центру. Открытие доски фильтрует ленту.
-Системная настройка уменьшения движения отключает перемещение акцента.
-Шестерёнка в шапке открывает настройки превью: тему и сброс демо. Настройки,
-которым нужны нативные функции, перечислены отдельно с пометкой «На телефоне».
-Кнопка «+» добавляет ссылку в тестовую ленту без обработки метаданных и ИИ.
-`src/ui/PostExperience.tsx` задаёт новый вид открытого поста и панели добавления:
-обложка, краткое описание, статусы, смена доски, теги, заметка, переход к оригиналу
-и копирование ссылки. Удаление можно отменить в ленте. При добавлении проверяются
-ссылка и дубликаты, выбирается доска и заметка; после сохранения можно открыть пост
-или добавить следующий. В браузерном превью эти действия меняют только данные сессии. Нативный `DetailScreen`
-использует те же панели с SQLite, ИИ, похожими постами и меню дополнительных действий.
-При добавлении на телефоне заметка и доска записываются до запуска очереди обработки.
-Тестовые данные живут в памяти; изображения загружаются с Unsplash и требуют сети.
-На широком экране приложение показано в рамке телефона, на узком занимает экран целиком.
-`/?device=1` открывает экран без рамки. Android использует `App.tsx`, а `BottomNav` и панели поста общие для обеих платформ.
-Нативный приём ссылок, SQLite и ИИ в этом превью не запускаются.
-
-Зафиксированный визуальный ориентир первой версии: текущие компоненты и палитры приложения,
-две колонки карточек, исходная иконка зайца-закладки в шапке. Панели появляются с коротким затуханием и сдвигом; при системном reduced motion
-переходы отключены. Это отправная точка для
-следующих визуальных экспериментов, а не перенос полной функциональности приложения в браузер.
-
-## Проверка логики
-```bash
-npx tsc --noEmit
-npx tsx --test tests/igExtract.test.ts
-npx tsx scripts/test-pipeline.ts                 # метаданные + Gemini на реальных ссылках
-npx tsx scripts/test-pipeline.ts --no-ai <url>   # только метаданные
-```
-
-## Сборка APK (локально, без EAS)
-```bash
-npx expo prebuild --platform android --clean --no-install
-./scripts/configure-android.sh
-cd android && NODE_ENV=production ./gradlew assembleRelease
-# → android/app/build/outputs/apk/release/app-release.apk
-```
-Пакет — `com.zabolotny.polka`, поэтому новая версия ставится поверх старой «Полки» (подпись та же).
-Ключ Gemini вшивается в APK (`extra.geminiApiKey`), так что APK нельзя публиковать открыто.
-
-## Модель
-По умолчанию `gemini-3.5-flash`, запасные — `gemini-flash-lite-latest` и `gemini-flash-latest` (`src/core/ai.ts`).
+## License
+**All rights reserved.** The source code is published for reference only. You may not use, copy, modify, distribute it, or publish builds of it without prior written permission from the author. See [LICENSE](LICENSE).

@@ -52,6 +52,11 @@ keystore/*
 *.keystore
 build/
 build-logs/
+SECRETS*
+*.local.md
+*credentials*
+google-services.json
+GoogleService-Info.plist
 
 # Local assistant project metadata
 .serena/

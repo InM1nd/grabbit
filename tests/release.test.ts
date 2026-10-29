@@ -28,8 +28,13 @@ test('manifest + source selection', () => {
   assert.equal(pickSource({ updateToken: 'x', updateManifestUrl: 'https://m' }).kind, 'manifest');
 });
 
-test('private repo without token → not-configured (live)', async () => {
-  await assert.rejects(fetchLatest({ kind: 'github-public', repo: 'InM1nd/polka' }), (e) => e instanceof UpdateError && e.code === 'not-configured');
+test('public releases API without token (live; not-configured while the repo is private)', async () => {
+  try {
+    const info = await fetchLatest({ kind: 'github-public', repo: 'InM1nd/polka' });
+    assert.match(info.version, /^\d+\.\d+\.\d+$/); assert.equal(info.needsAuth, false); assert.match(info.apkName, /\.apk$/);
+  } catch (e) {
+    assert.ok(e instanceof UpdateError && ['not-configured', 'network'].includes(e.code), String(e));
+  }
 });
 
 test('with a token → latest release with APK asset (live, read-only GET)', { skip: !process.env.UPDATE_TEST_TOKEN }, async () => {

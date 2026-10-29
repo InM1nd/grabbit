@@ -2,7 +2,7 @@
 // Runs IG_INJECT_JS in headless Chrome (logged OUT) to verify the script executes and its output parses.
 import { createRequire } from 'node:module';
 import { IG_INJECT_JS, extractInstagram } from '../src/core/igExtract';
-const require = createRequire('/workspace/tools/package.json');
+const require = createRequire(process.env.TOOLS_PACKAGE_JSON || import.meta.url);
 const puppeteer = require('puppeteer-core');
 (async () => {
   const url = process.argv[2] || 'https://www.instagram.com/reel/DdBtNAvhuoP/';
