@@ -20,7 +20,7 @@ import { ensurePermission, rescheduleReminder, setupNotifications } from './src/
 import { updateSettings, useSettings } from './src/settings';
 import { DARK, LIGHT, ThemeContext, useColors } from './src/theme';
 import { BoardsScreen } from './src/ui/BoardsScreen';
-import { ActionSheet, IconBtn, MARK_ICON, markLabel } from './src/ui/common';
+import { ActionSheet, haptic, IconBtn, MARK_ICON, markLabel } from './src/ui/common';
 import { DetailScreen } from './src/ui/DetailScreen';
 import { FeedScreen } from './src/ui/FeedScreen';
 import { MiscSorter } from './src/ui/MiscSorter';
@@ -207,6 +207,7 @@ function Main() {
 
   // ---------- swipe-delete with undo ----------
   const swipeDelete = useCallback((p: db.Post) => {
+    haptic('confirm');
     setHidden((h) => new Set(h).add(p.id));
     let undone = false;
     showToast({ msg: t('Удалено'), action: { label: t('Отменить'), onPress: () => { undone = true; setHidden((h) => { const n = new Set(h); n.delete(p.id); return n; }); toastA.setValue(0); setToastState(null); } } }, 4000);
@@ -222,6 +223,7 @@ function Main() {
   const onResorted = useCallback((msg: string, r?: ResortResult) => {
     reload();
     if (!r?.moves.length) return showToast({ msg }, 3500);
+    haptic('confirm');
     showToast({ msg, action: { label: t('Вернуть'), onPress: async () => {
       toastA.setValue(0); setToastState(null);
       const n = await undoResort(r);
@@ -329,7 +331,7 @@ function Main() {
         ...(['try', 'done', 'skip'] as const).map((m) => ({
           label: `${markLabel(m)}${markPost?.mark === m ? '  ✓' : ''}`, icon: MARK_ICON[m],
           // eslint-disable-next-line react-hooks/refs -- This callback runs on a user press, not while rendering the action list.
-          onPress: async () => { if (markPost) { await db.setMark(markPost.id, markPost.mark === m ? null : m); if (m === 'skip' && markPost.mark !== 'skip') toast(t('Скрыто из ленты: «Неважно»')); } },
+          onPress: async () => { if (markPost) { haptic(markPost.mark === m ? 'toggle-off' : 'toggle-on'); await db.setMark(markPost.id, markPost.mark === m ? null : m); if (m === 'skip' && markPost.mark !== 'skip') toast(t('Скрыто из ленты: «Неважно»')); } },
         })),
         ...(markPost?.mark ? [{ label: t('Снять отметку'), icon: 'close-circle-outline', onPress: () => { if (markPost) db.setMark(markPost.id, null); } }] : []),
       ]} />

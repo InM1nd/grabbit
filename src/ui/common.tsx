@@ -1,6 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import * as Haptics from 'expo-haptics';
 import React, { useEffect, useRef, useState } from 'react';
-import { AccessibilityInfo, Animated, KeyboardAvoidingView, Modal, Pressable, StyleSheet, Text, TextInput, View, type PressableProps, type StyleProp, type ViewStyle } from 'react-native';
+import { AccessibilityInfo, Animated, KeyboardAvoidingView, Platform, Modal, Pressable, StyleSheet, Text, TextInput, View, type PressableProps, type StyleProp, type ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '../theme';
 import { t } from '../i18n';
@@ -15,6 +16,13 @@ export function IconBtn({ name, onPress, size = 22, color, label }: { name: any;
 }
 
 // ---------- motion ----------
+
+const HAPTIC = { confirm: Haptics.AndroidHaptics.Confirm, reject: Haptics.AndroidHaptics.Reject, 'toggle-on': Haptics.AndroidHaptics.Toggle_On, 'toggle-off': Haptics.AndroidHaptics.Toggle_Off } as const;
+/** Short system haptic. Android only (the app ships for Android); performHapticFeedback needs no VIBRATE permission. */
+export function haptic(kind: keyof typeof HAPTIC): void {
+  if (Platform.OS !== 'android') return;
+  Haptics.performAndroidHapticsAsync(HAPTIC[kind]).catch(() => {});
+}
 
 /** System «reduce motion» setting; animations below collapse to instant changes when it is on. */
 let reduceMotion = false;

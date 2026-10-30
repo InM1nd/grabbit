@@ -31,6 +31,7 @@ const config: ExpoConfig = {
     },
     permissions: ['android.permission.POST_NOTIFICATIONS', 'android.permission.ACCESS_NETWORK_STATE', 'android.permission.REQUEST_INSTALL_PACKAGES'],
     blockedPermissions: [
+      'android.permission.VIBRATE', // haptic() uses performHapticFeedback, which needs no permission
       'android.permission.RECORD_AUDIO',
       'android.permission.SYSTEM_ALERT_WINDOW',
       'android.permission.READ_EXTERNAL_STORAGE',
