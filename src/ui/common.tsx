@@ -1,6 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import React, { useEffect, useState } from 'react';
-import { KeyboardAvoidingView, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { AccessibilityInfo, Animated, KeyboardAvoidingView, Modal, Pressable, StyleSheet, Text, TextInput, View, type PressableProps, type StyleProp, type ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '../theme';
 import { t } from '../i18n';
@@ -14,13 +14,61 @@ export function IconBtn({ name, onPress, size = 22, color, label }: { name: any;
   );
 }
 
+// ---------- motion ----------
+
+/** System «reduce motion» setting; animations below collapse to instant changes when it is on. */
+let reduceMotion = false;
+const reduceSubs = new Set<(v: boolean) => void>();
+void AccessibilityInfo.isReduceMotionEnabled?.().then((v) => { reduceMotion = v; reduceSubs.forEach((f) => f(v)); }).catch(() => {});
+AccessibilityInfo.addEventListener?.('reduceMotionChanged', (v) => { reduceMotion = v; reduceSubs.forEach((f) => f(v)); });
+// one listener for the whole app: every feed card uses this hook
+export function useReduceMotion(): boolean {
+  const [reduce, setReduce] = useState(reduceMotion);
+  useEffect(() => { reduceSubs.add(setReduce); return () => { reduceSubs.delete(setReduce); }; }, []);
+  return reduce;
+}
+
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+
+/** Pressable that sinks a little under the finger and springs back. */
+export function PressScale({ style, scaleTo = 0.95, onPressIn, onPressOut, ...rest }: Omit<PressableProps, 'style'> & { style?: StyleProp<ViewStyle>; scaleTo?: number }) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const reduce = useReduceMotion();
+  const to = (v: number) => Animated.spring(scale, { toValue: v, useNativeDriver: true, speed: 40, bounciness: v === 1 ? 10 : 0 }).start();
+  return <AnimatedPressable {...rest} style={[style, { transform: [{ scale }] }]}
+    onPressIn={(e) => { if (!reduce) to(scaleTo); onPressIn?.(e); }}
+    onPressOut={(e) => { to(1); onPressOut?.(e); }} />;
+}
+
+/** Icon that pops (grows and settles) each time it becomes active. */
+export function PopIcon({ active, ...icon }: React.ComponentProps<typeof Ionicons> & { active: boolean }) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const reduce = useReduceMotion();
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) { first.current = false; return; }
+    if (!active || reduce) return;
+    scale.setValue(0.6);
+    Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 14, bounciness: 16 }).start();
+  }, [active]);
+  return <Animated.View style={{ transform: [{ scale }] }}><Ionicons {...icon} /></Animated.View>;
+}
+
+/** Fades and slides its content in once, when it mounts. */
+export function Appear({ children, style, delay = 0, dy = 8 }: { children: React.ReactNode; style?: StyleProp<ViewStyle>; delay?: number; dy?: number }) {
+  const p = useRef(new Animated.Value(0)).current;
+  const reduce = useReduceMotion();
+  useEffect(() => { Animated.timing(p, { toValue: 1, duration: reduce ? 0 : 220, delay: reduce ? 0 : delay, useNativeDriver: true }).start(); }, []);
+  return <Animated.View style={[style, { opacity: p, transform: [{ translateY: p.interpolate({ inputRange: [0, 1], outputRange: [dy, 0] }) }] }]}>{children}</Animated.View>;
+}
+
 export function Chip({ label, active, icon, onPress, onLongPress }: { label: string; active?: boolean; icon?: React.ComponentProps<typeof Ionicons>['name']; onPress?: () => void; onLongPress?: () => void }) {
   const c = useColors();
   return (
-    <Pressable onPress={onPress} onLongPress={onLongPress} style={[styles.chip, { backgroundColor: active ? c.chipActive : c.chip }, !!icon && styles.chipWithIcon]}>
-      {!!icon && <Ionicons name={icon} size={15} color={active ? c.onChipActive : c.sub} />}
+    <PressScale onPress={onPress} onLongPress={onLongPress} style={[styles.chip, { backgroundColor: active ? c.chipActive : c.chip }, !!icon && styles.chipWithIcon]}>
+      {!!icon && <PopIcon active={!!active} name={icon} size={15} color={active ? c.onChipActive : c.sub} />}
       <Text numberOfLines={1} style={[styles.chipText, { color: active ? c.onChipActive : c.text }]}>{label}</Text>
-    </Pressable>
+    </PressScale>
   );
 }
 

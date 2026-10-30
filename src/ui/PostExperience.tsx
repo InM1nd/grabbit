@@ -8,7 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { normalizeUrl, PLATFORM_LABEL } from '../core/url';
 import { t } from '../i18n';
 import { PLATFORM_ICON, timeAgo, useColors } from '../theme';
-import { MARK_ICON } from './common';
+import { Appear, MARK_ICON, PopIcon, PressScale, useReduceMotion } from './common';
 
 export type NewPost = { url: string; note: string; boardId: number | null };
 
@@ -51,8 +51,8 @@ function Primary({ label, icon = 'arrow-forward', onPress, disabled = false }: {
 function BoardPicker({ boards, value, onChange, onNew, automatic = false }: { boards: Board[]; value: number | null; onChange: (id: number | null) => void; onNew?: () => void; automatic?: boolean }) {
   const c = useColors();
   return <View style={[styles.chips, { flexWrap: 'wrap' }]}>
-    {[{ id: null, name: automatic ? t('Авто — выбирает ИИ') : t('Без доски'), emoji: null }, ...boards].map(b => <Pressable key={String(b.id)} accessibilityRole="radio" aria-checked={value === b.id} accessibilityLabel={t('Доска: {name}', { name: b.name })} onPress={() => onChange(b.id)} style={[styles.chip, { backgroundColor: value === b.id ? c.accentSoft : c.card, borderColor: value === b.id ? c.accent : 'transparent' }]}>{b.id === null ? <Ionicons name={automatic ? 'sparkles-outline' : 'remove-circle-outline'} color={c.sub} size={15} /> : !!b.emoji && <Text style={{ fontSize: 15 }}>{b.emoji}</Text>}<Text style={{ color: c.text, fontSize: 13, fontWeight: value === b.id ? '600' : '400' }}>{b.name}</Text></Pressable>)}
-    {onNew && <Pressable accessibilityRole="button" onPress={onNew} style={[styles.chip, { borderColor: c.line, borderStyle: 'dashed' }]}><Ionicons name="add" color={c.accent} size={15} /><Text style={{ color: c.accent, fontSize: 13 }}>{t('Новая доска')}</Text></Pressable>}
+    {[{ id: null, name: automatic ? t('Авто — выбирает ИИ') : t('Без доски'), emoji: null }, ...boards].map(b => <PressScale key={String(b.id)} accessibilityRole="radio" aria-checked={value === b.id} accessibilityLabel={t('Доска: {name}', { name: b.name })} onPress={() => onChange(b.id)} style={[styles.chip, { backgroundColor: value === b.id ? c.accentSoft : c.card, borderColor: value === b.id ? c.accent : 'transparent' }]}>{b.id === null ? <Ionicons name={automatic ? 'sparkles-outline' : 'remove-circle-outline'} color={c.sub} size={15} /> : !!b.emoji && <Text style={{ fontSize: 15 }}>{b.emoji}</Text>}<Text style={{ color: c.text, fontSize: 13, fontWeight: value === b.id ? '600' : '400' }}>{b.name}</Text></PressScale>)}
+    {onNew && <PressScale accessibilityRole="button" onPress={onNew} style={[styles.chip, { borderColor: c.line, borderStyle: 'dashed' }]}><Ionicons name="add" color={c.accent} size={15} /><Text style={{ color: c.accent, fontSize: 13 }}>{t('Новая доска')}</Text></PressScale>}
   </View>;
 }
 
@@ -64,6 +64,9 @@ export function PostPanel({ post, boards, onUpdate, onDelete, onClose, onMenu, o
   const c = useColors();
   const [tagInput, setTagInput] = useState('');
   const [pickingBoard, setPickingBoard] = useState(false);
+  const chevron = useRef(new Animated.Value(0)).current;
+  const reduceMotion = useReduceMotion();
+  useEffect(() => { Animated.spring(chevron, { toValue: pickingBoard ? 1 : 0, useNativeDriver: true, speed: reduceMotion ? 100 : 20, bounciness: 6 }).start(); }, [pickingBoard]);
   const [copyMessage, setCopyMessage] = useState('');
   const [showOriginal, setShowOriginal] = useState(false);
   const board = boards.find(b => b.id === post.boardId);
@@ -78,11 +81,11 @@ export function PostPanel({ post, boards, onUpdate, onDelete, onClose, onMenu, o
       {(post.status === 'pending' || busy) && <View style={[styles.summary, { backgroundColor: c.card }]}><ActivityIndicator color={c.accent} /><Text style={{ color: c.sub }}>{t('ИИ разбирает пост…')}</Text></View>}
       {!!post.summary && <View style={[styles.summary, { backgroundColor: c.card }]}><View style={styles.inline}><Ionicons name="sparkles-outline" size={15} color={c.accent} /><Text style={[styles.eyebrow, { color: c.sub }]}>{t('КОРОТКО О ПОСТЕ')}</Text></View><Text selectable style={[styles.body, { color: c.text }]}>{post.summary}</Text></View>}
       <Text style={[styles.section, { color: c.sub }]}>{t('ЧТО С ЭТИМ СДЕЛАТЬ')}</Text>
-      <View style={styles.marks}>{([{ value: 'try', label: t('Попробовать'), icon: MARK_ICON.try }, { value: 'done', label: t('Сделано'), icon: MARK_ICON.done }, { value: 'skip', label: t('Неважно'), icon: MARK_ICON.skip }] as const).map(mark => <Pressable key={mark.value} accessibilityRole="button" aria-pressed={post.mark === mark.value} onPress={() => onUpdate({ mark: post.mark === mark.value ? null : mark.value })} style={[styles.mark, { backgroundColor: post.mark === mark.value ? c.accentSoft : c.card, borderColor: post.mark === mark.value ? c.accent : 'transparent' }]}><Ionicons name={mark.icon} color={post.mark === mark.value ? c.accent : c.sub} size={19} /><Text style={{ color: c.text, fontSize: 11, fontWeight: '500' }}>{mark.label}</Text></Pressable>)}</View>
+      <View style={styles.marks}>{([{ value: 'try', label: t('Попробовать'), icon: MARK_ICON.try }, { value: 'done', label: t('Сделано'), icon: MARK_ICON.done }, { value: 'skip', label: t('Неважно'), icon: MARK_ICON.skip }] as const).map(mark => <PressScale key={mark.value} accessibilityRole="button" aria-pressed={post.mark === mark.value} onPress={() => onUpdate({ mark: post.mark === mark.value ? null : mark.value })} style={[styles.mark, { backgroundColor: post.mark === mark.value ? c.accentSoft : c.card, borderColor: post.mark === mark.value ? c.accent : 'transparent' }]}><PopIcon active={post.mark === mark.value} name={mark.icon} color={post.mark === mark.value ? c.accent : c.sub} size={19} /><Text style={{ color: c.text, fontSize: 11, fontWeight: '500' }}>{mark.label}</Text></PressScale>)}</View>
       <Text style={[styles.section, { color: c.sub }]}>{t('НА СВОЁМ МЕСТЕ')}</Text>
       <View style={[styles.boardCard, { borderColor: c.line }]}>
-      <Pressable accessibilityRole="button" accessibilityLabel={t('Изменить доску')} aria-expanded={pickingBoard} onPress={() => setPickingBoard(v => !v)} style={styles.boardRow}>{board?.emoji ? <Text style={{ fontSize: 24 }}>{board.emoji}</Text> : <Ionicons name="remove-circle-outline" size={24} color={c.sub} />}<View style={{ flex: 1, gap: 3 }}><Text style={{ color: c.sub, fontSize: 11 }}>{t('ДОСКА')}</Text><Text style={{ color: c.text, fontSize: 15, fontWeight: '600' }}>{board?.name || t('Без доски')}</Text></View><Ionicons name={pickingBoard ? 'chevron-up' : 'chevron-forward'} size={18} color={c.sub} /></Pressable>
-      {pickingBoard && <View style={[styles.boardList, { borderColor: c.line }]}><BoardPicker boards={boards} value={post.boardId} onNew={onNewBoard} onChange={id => { onUpdate({ boardId: id }); setPickingBoard(false); }} /></View>}
+      <Pressable accessibilityRole="button" accessibilityLabel={t('Изменить доску')} aria-expanded={pickingBoard} onPress={() => setPickingBoard(v => !v)} style={styles.boardRow}>{board?.emoji ? <Text style={{ fontSize: 24 }}>{board.emoji}</Text> : <Ionicons name="remove-circle-outline" size={24} color={c.sub} />}<View style={{ flex: 1, gap: 3 }}><Text style={{ color: c.sub, fontSize: 11 }}>{t('ДОСКА')}</Text><Text style={{ color: c.text, fontSize: 15, fontWeight: '600' }}>{board?.name || t('Без доски')}</Text></View><Animated.View style={{ transform: [{ rotate: chevron.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '-90deg'] }) }] }}><Ionicons name="chevron-forward" size={18} color={c.sub} /></Animated.View></Pressable>
+      {pickingBoard && <Appear dy={-6} style={[styles.boardList, { borderColor: c.line }]}><BoardPicker boards={boards} value={post.boardId} onNew={onNewBoard} onChange={id => { onUpdate({ boardId: id }); setPickingBoard(false); }} /></Appear>}
       </View>
       {!!post.tags.length && <View style={[styles.chips, { flexWrap: 'wrap', paddingTop: 14 }]}>{post.tags.map(tag => <Pressable key={tag} onPress={() => onRemoveTag?.(tag)} disabled={!onRemoveTag} style={[styles.tag, { backgroundColor: c.card }]}><Text style={{ color: c.sub, fontSize: 12 }}>#{tag}</Text></Pressable>)}</View>}
       {onAddTag && <TextInput accessibilityLabel={t('+ тег')} value={tagInput} onChangeText={setTagInput} placeholder={t('+ тег')} placeholderTextColor={c.faint} onSubmitEditing={() => { const tag = tagInput.trim().replace(/^#/, '').toLowerCase(); if (tag) onAddTag(tag); setTagInput(''); }} style={[styles.tag, { color: c.text, backgroundColor: c.card, marginTop: 8, minHeight: 40 }]} />}
