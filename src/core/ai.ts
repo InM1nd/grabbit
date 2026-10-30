@@ -77,10 +77,11 @@ export function sniffMime(b64: string): string {
  * They add words without adding meaning, so they must not make a thin caption look informative.
  */
 export function stripPlatformNoise(s: string): string {
+  // \b and \w are ASCII-only in JS (even with /u), so word edges are spelled out with \p{L} for Cyrillic.
   return s
-    .replace(/^\s*[\d.,KkMmКкМм\s]+\s*(?:likes?|views?|лайк\w*|просмотр\w*|отметк\w*)\b[^:"«]{0,120}:\s*/i, '')
-    .replace(/\b[\d.,]+\s*[KkMmКкМм]?\s*(?:likes?|comments?|views?|shares?|followers?|лайк\w*|комментари\w*|просмотр\w*|подписчик\w*)\b/gi, ' ')
-    .replace(/\b(?:Instagram|TikTok|YouTube|Reels?|Shorts?|reel|video|видео)\b/gi, ' ');
+    .replace(/^\s*[\d.,KkMmКкМм\s]+\s*(?:likes?|views?|лайк\p{L}*|просмотр\p{L}*|отмет\p{L}*)(?![\p{L}\p{N}])(?:«Нравится»|[^:"«]){0,120}:\s*/iu, '')
+    .replace(/(^|[^\p{L}\p{N}])[\d.,]+\s*[KkMmКкМм]?\s*(?:likes?|comments?|views?|shares?|followers?|лайк\p{L}*|отмет\p{L}*|комментари\p{L}*|просмотр\p{L}*|подписчик\p{L}*)(?![\p{L}\p{N}])/giu, '$1 ')
+    .replace(/(^|[^\p{L}\p{N}])(?:Instagram|TikTok|YouTube|Reels?|Shorts?|video|видео)(?![\p{L}\p{N}])/giu, '$1 ');
 }
 
 /** Caption too thin to understand the post (emoji, hashtags only, "Instagram reel" etc.). */

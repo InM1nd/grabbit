@@ -76,6 +76,14 @@ test('weak text: platform counters and labels do not make a thin caption look in
   assert.equal(isWeakText(meta({ description: real })), false);
 });
 
+test('weak text: Russian counters and labels are stripped too (\\b is ASCII-only in JS)', () => {
+  const ru = stripPlatformNoise('1 234 отметок «Нравится», 56 комментариев - user, 1 октября 2026 г.: «🔥 смотри до конца» 7,8K просмотров, 12 лайков, видео');
+  for (const w of ['лайк', 'комментар', 'отмет', 'просмотр', 'видео']) assert.equal(ru.includes(w), false, `"${w}" left in: ${ru}`);
+  assert.ok(ru.includes('смотри до конца'));
+  const rich = '12 лайков - dev_user: «Пять расширений VS Code, которые экономят мне час каждый день при работе с React и TypeScript»';
+  assert.equal(isWeakText(meta({ description: rich })), false);
+});
+
 test('image is sent for screenshots and thin captions, never without a picture or when vision is off', () => {
   const weak = meta({ description: '🔥 смотри' });
   const rich = meta({ description: 'Подробный текст поста про настройку редактора кода, плагины, темы, шрифты и горячие клавиши для работы.' });
