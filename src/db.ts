@@ -277,11 +277,15 @@ export async function boardNames(): Promise<string[]> {
 export async function aiBoards(): Promise<AiBoard[]> {
   const db = await getDb();
   const rows = await db.getAllAsync<any>('SELECT * FROM boards ORDER BY id');
-  const tagRows = await db.getAllAsync<{ board_id: number; tags: string }>("SELECT board_id, tags FROM posts WHERE board_id IS NOT NULL AND status = 'done' ORDER BY created_at DESC LIMIT 1500");
+  const tagRows = await db.getAllAsync<{ board_id: number; tags: string; ai_title: string | null }>("SELECT board_id, tags, ai_title FROM posts WHERE board_id IS NOT NULL AND status = 'done' ORDER BY created_at DESC LIMIT 1500");
   const freq = new Map<number, Map<string, number>>();
   const count = new Map<number, number>();
+  const samples = new Map<number, string[]>(); // newest first: what the board is "about" right now
   for (const r of tagRows) {
     count.set(r.board_id, (count.get(r.board_id) ?? 0) + 1);
+    const title = (r.ai_title || '').trim();
+    const sm = samples.get(r.board_id) ?? [];
+    if (title && sm.length < 2 && !sm.includes(title)) { sm.push(title); samples.set(r.board_id, sm); }
     let tags: string[] = [];
     try { tags = JSON.parse(r.tags || '[]'); } catch {}
     const m = freq.get(r.board_id) ?? new Map<string, number>();
@@ -291,6 +295,7 @@ export async function aiBoards(): Promise<AiBoard[]> {
   return rows.map((r) => ({
     id: r.id, name: showName(r), key: r.key ?? null, nameRu: r.name_ru, nameEn: r.name_en, nameUk: r.name_uk,
     count: count.get(r.id) ?? 0,
+    samples: r.key === 'misc' ? [] : samples.get(r.id) ?? [],
     tags: r.key === 'misc' ? [] : [...(freq.get(r.id) ?? new Map()).entries()].filter(([, n]) => n >= 2 || (count.get(r.id) ?? 0) < 4).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([t]) => t),
   }));
 }

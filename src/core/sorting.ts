@@ -2,10 +2,18 @@
 import { DEFAULT_BOARDS, defaultBoardKey, findBoardByName, type BoardLang, type BoardNames } from './boards';
 import { cosine, normalize } from './embed';
 
-export interface AiBoard extends BoardNames { id: number; tags?: string[]; count?: number }
+export interface AiBoard extends BoardNames {
+  id: number; tags?: string[]; count?: number;
+  /** Titles of a few recent posts on the board: they tell the model what a custom-named board is really about. */
+  samples?: string[];
+}
 
-/** New boards are created only when the model is at least this sure nothing existing fits. */
-export const NEW_BOARD_MIN_CONFIDENCE = 0.7;
+/**
+ * New boards are created only when the model is at least this sure of the topic (1.10.1: 0.7 → 0.6).
+ * The prompt now defines confidence as "how clear the topic is", so a clear topic with no matching board
+ * is a good reason to create one instead of dropping the post in Misc.
+ */
+export const NEW_BOARD_MIN_CONFIDENCE = 0.6;
 /** Below this the AI choice is treated as a guess and the embedding fallback may override Misc. */
 export const LOW_CONFIDENCE = 0.5;
 
@@ -50,6 +58,7 @@ export function resolveBoard(a: RawBoardAnswer, boards: AiBoard[], lang: BoardLa
   const confidence = clampConfidence(a.confidence);
 
   const idRaw = typeof a.boardId === 'number' ? String(a.boardId) : str(a.boardId, 12).replace(/^#|^id\s*=?\s*/i, '');
+  if (/^(?:misc|none|other|разное|0)$/i.test(idRaw)) return { kind: 'misc', confidence, reason: 'ai' };
   if (/^\d+$/.test(idRaw)) {
     const hit = boards.find((b) => b.id === Number(idRaw));
     if (hit) return hit.key === 'misc' ? { kind: 'misc', confidence, reason: 'ai' } : { kind: 'existing', id: hit.id, confidence };
@@ -102,27 +111,70 @@ export function centroid(vecs: number[][]): number[] | null {
 
 export interface BoardVector { id: number; vec: number[]; kind: 'centroid' | 'name' }
 
+export interface PickOpts {
+  centroidFloor: number; nameFloor: number; nameOffset: number; margin: number; nameMargin: number; minPosts: number;
+}
+
 /**
- * gemini-embedding-001 cosines are very compressed: on a live RU/EN sample (2026-10-30) a post scored
+ * Raw gemini-embedding-001 cosines are very compressed: on a live RU/EN sample (2026-10-30) a post scored
  * 0.83–0.93 against *every* topic centroid; the right board led by 0.03–0.07, unrelated posts led by
  * < 0.005. So the decision is relative: the best board must beat the runner-up by a clear margin.
  * Name embeddings ("Board: Recipes / Рецепты") score ~0.04 lower and are noisier → offset + bigger margin.
+ * Used only when there are too few boards to estimate a common component (see MIN_CANDIDATES_FOR_CENTERING).
  */
-export const EMBED_PICK = { centroidFloor: 0.75, nameFloor: 0.7, nameOffset: 0.04, margin: 0.02, nameMargin: 0.03, minPosts: 3 } as const;
+export const EMBED_PICK: PickOpts = { centroidFloor: 0.75, nameFloor: 0.7, nameOffset: 0.04, margin: 0.02, nameMargin: 0.03, minPosts: 3 };
+
+/**
+ * 1.10.1: the same decision after subtracting the mean board vector (the component all vectors share, which
+ * is what squeezes raw cosines into 0.83–0.93). Scores then span roughly −0.3…0.6, so the same noise matters
+ * far less and the margin can be a real gap instead of 0.02. NOT tuned on live data yet — starting values from
+ * the simulation in tests/sorting.test.ts; re-tune with scripts/embed-calibrate.mts.
+ */
+export const EMBED_PICK_CENTERED: PickOpts = { centroidFloor: 0.25, nameFloor: 0.22, nameOffset: 0.05, margin: 0.06, nameMargin: 0.07, minPosts: 3 };
+
+/** With fewer boards than this the "mean board" is just one of them and centering would destroy the signal. */
+export const MIN_CANDIDATES_FOR_CENTERING = 4;
+/** Posts needed before a board is represented by its centroid instead of its name (shared with processor.ts). */
+export const MIN_CENTROID_POSTS = EMBED_PICK.minPosts;
+
+/** Subtract `mean` and renormalize. */
+export function centerVec(v: number[], mean: number[]): number[] {
+  if (v.length !== mean.length) return v;
+  return normalize(v.map((x, i) => x - mean[i]));
+}
+
+export interface PreparedBoards { cands: BoardVector[]; centered: boolean; mean: number[] | null }
+
+/** Center the candidates once; reuse for many posts («Разобрать» checks up to hundreds of them). */
+export function prepareBoardVectors(cands: BoardVector[]): PreparedBoards {
+  const ok = cands.filter((c) => c.vec?.length);
+  const dim = ok[0]?.vec.length ?? 0;
+  const same = ok.filter((c) => c.vec.length === dim);
+  if (same.length < MIN_CANDIDATES_FOR_CENTERING) return { cands: same, centered: false, mean: null };
+  const mean = new Array(dim).fill(0);
+  for (const c of same) { const n = normalize(c.vec); for (let i = 0; i < dim; i++) mean[i] += n[i] / same.length; }
+  return { cands: same.map((c) => ({ ...c, vec: centerVec(normalize(c.vec), mean) })), centered: true, mean };
+}
 
 /** Best board by embedding similarity, or null if nothing clearly stands out. */
-export function pickBoardByEmbedding(vec: number[] | null | undefined, cands: BoardVector[], opts: typeof EMBED_PICK = EMBED_PICK): { id: number; score: number } | null {
-  if (!vec?.length || !cands.length) return null;
-  const scored = cands.map((c) => {
-    const raw = cosine(vec, c.vec);
-    return { id: c.id, kind: c.kind, raw, adj: c.kind === 'name' ? raw + opts.nameOffset : raw };
+export function pickBoard(vec: number[] | null | undefined, prep: PreparedBoards, opts?: PickOpts): { id: number; score: number } | null {
+  if (!vec?.length || !prep.cands.length) return null;
+  const o = opts ?? (prep.centered ? EMBED_PICK_CENTERED : EMBED_PICK);
+  const q = prep.centered && prep.mean ? centerVec(normalize(vec), prep.mean) : vec;
+  const scored = prep.cands.map((c) => {
+    const raw = cosine(q, c.vec);
+    return { id: c.id, kind: c.kind, raw, adj: c.kind === 'name' ? raw + o.nameOffset : raw };
   }).sort((a, b) => b.adj - a.adj);
   const [best] = scored;
   const second = scored.find((x) => x.id !== best.id);
-  if (best.raw < (best.kind === 'name' ? opts.nameFloor : opts.centroidFloor)) return null;
-  const need = best.kind === 'name' || second?.kind === 'name' ? opts.nameMargin : opts.margin;
+  if (best.raw < (best.kind === 'name' ? o.nameFloor : o.centroidFloor)) return null;
+  const need = best.kind === 'name' || second?.kind === 'name' ? o.nameMargin : o.margin;
   if (second && best.adj - second.adj < need) return null;
   return { id: best.id, score: best.raw };
+}
+
+export function pickBoardByEmbedding(vec: number[] | null | undefined, cands: BoardVector[], opts?: PickOpts): { id: number; score: number } | null {
+  return pickBoard(vec, prepareBoardVectors(cands), opts);
 }
 
 /** Prompt + parser for the one-off translation of the user's AI-created boards. */

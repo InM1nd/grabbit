@@ -1,4 +1,4 @@
-import { DEFAULT_BOARDS, miscName, type BoardLang } from './boards';
+import { BOARD_HINTS, miscName, type BoardLang } from './boards';
 import { buildTranslatePrompt, parseTranslations, resolveBoard, type AiBoard, type BoardChoice } from './sorting';
 import type { AiResult, Metadata } from './types';
 import { PLATFORM_LABEL } from './url';
@@ -72,12 +72,29 @@ export function sniffMime(b64: string): string {
   return 'image/jpeg';
 }
 
+/**
+ * Counters and labels that platforms glue onto captions ("12 likes, 3 comments - user on October 1, 2026: …").
+ * They add words without adding meaning, so they must not make a thin caption look informative.
+ */
+export function stripPlatformNoise(s: string): string {
+  return s
+    .replace(/^\s*[\d.,KkMmКкМм\s]+\s*(?:likes?|views?|лайк\w*|просмотр\w*|отметк\w*)\b[^:"«]{0,120}:\s*/i, '')
+    .replace(/\b[\d.,]+\s*[KkMmКкМм]?\s*(?:likes?|comments?|views?|shares?|followers?|лайк\w*|комментари\w*|просмотр\w*|подписчик\w*)\b/gi, ' ')
+    .replace(/\b(?:Instagram|TikTok|YouTube|Reels?|Shorts?|reel|video|видео)\b/gi, ' ');
+}
+
 /** Caption too thin to understand the post (emoji, hashtags only, "Instagram reel" etc.). */
 export function isWeakText(meta: Metadata, sharedText?: string, note?: string): boolean {
-  const txt = [meta.description, sharedText, note].filter(Boolean).join(' ')
+  const txt = stripPlatformNoise([meta.description, sharedText, note].filter(Boolean).join(' '))
     .replace(/#[\p{L}\p{N}_]+/gu, '').replace(/@[\w.]+/g, '').replace(/https?:\/\/\S+/g, '')
     .replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
   return txt.split(' ').filter((w) => w.length > 2).length < 8;
+}
+
+/** Whether the preview image goes along with the request (it costs tokens, so only when it can change the answer). */
+export function shouldSendImage(o: { hasImage: boolean; shot?: boolean; aiVision: boolean; meta: Metadata; sharedText?: string; note?: string }): boolean {
+  if (!o.hasImage) return false;
+  return !!o.shot || (o.aiVision && isWeakText(o.meta, o.sharedText, o.note));
 }
 
 /** Must stay identical to server/lib/validate.ts RESPONSE_SCHEMA (the proxy enforces its own copy). */
@@ -98,52 +115,87 @@ export const SCHEMA = {
 };
 
 const asBoards = (list: (AiBoard | string)[]): AiBoard[] => list.map((b, i) => (typeof b === 'string' ? { id: i + 1, name: b } : b));
-/** Board list for the prompt; tags are trimmed so the whole prompt stays under the proxy's 12k chars. */
+const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
+
+/** One board line at a detail level: 0 = hint/examples + 5 tags … 3 = name only (Misc keeps its note). */
+function boardLine(b: AiBoard, level: number): string {
+  const hint = b.key ? BOARD_HINTS[b.key] : undefined;
+  const tagsN = [5, 3, 3, 0][level];
+  const sampN = [2, 1, 0, 0][level];
+  const bits: string[] = [];
+  if (b.key === 'misc') bits.push(clip(hint!, level === 0 ? 90 : 60));
+  else if (hint) { if (level <= 1) bits.push(level === 0 ? hint : clip(hint, 50)); }
+  else if (sampN && b.samples?.length) bits.push('примеры: ' + b.samples.slice(0, sampN).map((t) => `«${clip(t.replace(/[«»"]/g, ''), 30)}»`).join(', '));
+  if (tagsN && b.tags?.length && b.key !== 'misc') bits.push('теги: ' + b.tags.slice(0, tagsN).map((t) => t.slice(0, 20)).join(', '));
+  return `- id=${b.id}: ${q(b.name)}${bits.length ? ` — ${bits.join('; ')}` : ''}`;
+}
+
+/**
+ * Board list for the prompt, Misc last and marked as the fallback. Detail shrinks level by level
+ * (hint/examples/tags) until it fits `budget`, so the whole prompt stays under the proxy's 12k chars.
+ */
 export function boardLines(boards: AiBoard[], budget = 4500): string[] {
-  for (const n of [5, 3, 0]) {
-    const lines = boards.slice(0, 80).map((b) => `- id=${b.id}: ${q(b.name)}${n && b.tags?.length ? ` — теги: ${b.tags.slice(0, n).map((t) => t.slice(0, 20)).join(', ')}` : ''}`);
-    if (lines.join('\n').length <= budget || n === 0) return lines;
+  const misc = boards.find((b) => b.key === 'misc');
+  const shown = [...boards.filter((b) => b !== misc).slice(0, misc ? 79 : 80), ...(misc ? [misc] : [])];
+  let lines: string[] = [];
+  for (let level = 0; level <= 3; level++) {
+    lines = shown.map((b) => boardLine(b, level));
+    if (lines.join('\n').length <= budget) break;
   }
-  return [];
+  return lines;
 }
 const q = (s: string) => `"${s.replace(/"/g, "'").slice(0, 40)}"`;
+
+/** Whole prompt must stay below this; the proxy rejects > 12 000 chars (server/lib/validate.ts MAX_PROMPT_CHARS). */
+export const PROMPT_BUDGET = 11_000;
+const NEW_BOARD_EXAMPLES = { ru: '«Рецепты», «Путешествия», «Фитнес»', en: '"Recipes", "Travel", "Fitness"', uk: '«Рецепти», «Подорожі», «Фітнес»' } as const;
 
 export function buildPrompt({ meta, sharedText, boards: rawBoards, image, note, lang = 'ru', boardLang = 'ru' }: AiInput): string {
   const L = LANG_PHRASE[lang];
   const BL = BOARD_LANG_PHRASE[boardLang];
   const boards = asBoards(rawBoards);
-  const examples = Object.entries(DEFAULT_BOARDS).filter(([k]) => k !== 'misc').map(([, v]) => `"${v[boardLang]}"`).join(', ');
   const misc = boards.find((b) => b.key === 'misc');
   const miscLabel = misc ? `id=${misc.id} (${q(miscName(boardLang))})` : q(miscName(boardLang));
-  const lines = [
+  const head = [
     'Ты помогаешь вести личный органайзер сохранённых постов из соцсетей (как Pinterest).',
-    'Пользователь в основном сохраняет посты про технологии: ИИ-инструменты, программирование, гаджеты, дизайн, стартапы, но может быть что угодно.',
+    'Чаще всего это технологии (ИИ, код, гаджеты, дизайн), но тема может быть любой: для любой ясной темы должна найтись доска.',
     'По данным ниже:',
     `1) title — короткий понятный заголовок ${L} (до 60 символов), без кликбейта;`,
     `2) summary — 1–3 предложения ${L}: о чём пост и что из него можно взять. Если данных мало, честно опиши, что известно (платформа, автор), не выдумывай детали;`,
     `3) tags — 3–6 коротких тегов строчными буквами ${L} (названия продуктов/технологий можно латиницей, например "chatgpt", "react");`,
-    '4) доска. Сначала пойми тему поста (по тексту, картинке, тегам, автору), потом сравни её с досками из списка (у каждой указаны частые теги).',
-    '   • Если тема подходит к существующей доске хотя бы в целом — верни её id в boardId (только число из списка) и её название в board. Предпочитай существующие доски.',
-    `   • Если ни одна не подходит, а тема ясна — boardId "new", newBoard {ru, en, uk}: широкая тема в 1–3 слова на всех трёх языках (например ${examples}), не узкая под один пост; board — название ${BL}.`,
-    `   • Доска ${miscLabel} — только когда тему поста действительно невозможно понять. Если тема понятна, не выбирай её.`,
-    '   • confidence — насколько ты уверен в выборе доски, от 0 до 1.',
+    '4) доска. Определи тему поста (по тексту, картинке, тегам, автору) и сравни со смыслом досок из списка.',
+    '   • Подходит существующая доска хотя бы по смыслу (слов из её названия в посте может не быть) — верни её id в boardId (только число из списка) и название в board. Предпочитай существующие доски.',
+    `   • Ни одна не подходит, но тема ясна — boardId "new", newBoard {ru, en, uk}: широкая тема в 1–3 слова на всех трёх языках (например ${NEW_BOARD_EXAMPLES[boardLang]}), не узкая под один пост; board — название ${BL}.`,
+    `   • Доска ${miscLabel} — только если тему не понять ни по тексту, ни по картинке. Ясная тема без подходящей доски — это "new", а не Разное.`,
+    '   • confidence — насколько ясна тема поста (для новой доски: ясна ли тема, а не «есть ли такая доска»): 0.8+ очевидно, 0.5–0.7 догадка, ниже 0.4 тему не понять.',
     '5) boardEmoji — один эмодзи для доски.',
     '',
+    'Примеры решений:',
+    '• «10 расширений VS Code для React» → доска про программирование (0.9), хотя слова «программирование» в посте нет.',
+    '• Подпись «🔥 смотри до конца», на картинке интерфейс ChatGPT → доска про ИИ по картинке (0.7).',
+    '• Рецепт борща, подходящей доски нет → "new": «Рецепты / Recipes / Рецепти» (0.8): тема ясна, значит уверенность высокая.',
+    `• Подпись «🔥🔥», картинки нет, автор ничего не говорит → ${q(miscName(boardLang))} (0.2).`,
+    '',
     'Существующие доски:',
-    ...(boards.length ? boardLines(boards) : ['(пока нет)']),
+    ...(boards.length ? boardLines(boards, 3800) : ['(пока нет)']),
     '',
     `Платформа: ${PLATFORM_LABEL[meta.platform]}`,
     `Ссылка: ${meta.url}`,
   ];
-  if (meta.author) lines.push(`Автор: ${meta.author}`);
-  if (meta.title) lines.push(`Заголовок: ${meta.title}`);
-  if (meta.description) lines.push(`Текст/описание: ${meta.description.slice(0, 3000)}`);
-  if (sharedText) lines.push(`Текст, который пришёл вместе со ссылкой: ${sharedText.slice(0, 1500)}`);
-  if (note) lines.push(`Заметка пользователя о посте (главный источник): ${note.slice(0, 1000)}`);
-  if (image) lines.push('Приложено превью поста (кадр/обложка). Внимательно рассмотри его: текст на картинке, интерфейсы, предметы, людей — и опиши, о чём пост, по тому, что видно. Не выдумывай то, чего не видно.');
-  if (meta.unavailable && !note && !image) lines.push('(Платформа сообщает, что пост недоступен без входа: приватный аккаунт, ограничение по возрасту или пост удалён. Честно напиши это в summary и предложи подключить Instagram в настройках или добавить заметку.)');
-  else if (meta.blocked && !sharedText && !note && !image) lines.push('(Сайт не отдал метаданные — опирайся на ссылку и платформу.)');
-  return lines.join('\n');
+  if (meta.author) head.push(`Автор: ${meta.author}`);
+  if (meta.title) head.push(`Заголовок: ${meta.title}`);
+  const tail: string[] = [];
+  if (sharedText) tail.push(`Текст, который пришёл вместе со ссылкой: ${sharedText.slice(0, 1500)}`);
+  if (note) tail.push(`Заметка пользователя о посте (главный источник): ${note.slice(0, 1000)}`);
+  if (image) tail.push('Приложено превью поста (кадр/обложка). Внимательно рассмотри его: текст на картинке, интерфейсы, предметы, людей — и опиши, о чём пост, по тому, что видно. Не выдумывай то, чего не видно.');
+  if (meta.unavailable && !note && !image) tail.push('(Платформа сообщает, что пост недоступен без входа: приватный аккаунт, ограничение по возрасту или пост удалён. Честно напиши это в summary и предложи подключить Instagram в настройках или добавить заметку.)');
+  else if (meta.blocked && !sharedText && !note && !image) tail.push('(Сайт не отдал метаданные — опирайся на ссылку и платформу.)');
+  // The caption is the only part that can be long: it gives way when the prompt would exceed the budget.
+  const fixed = head.join('\n').length + tail.join('\n').length + 2;
+  const label = 'Текст/описание: ';
+  const room = Math.max(300, Math.min(3000, PROMPT_BUDGET - fixed - label.length - 1));
+  const desc = meta.description ? [label + meta.description.slice(0, room)] : [];
+  return [...head, ...desc, ...tail].join('\n');
 }
 
 /** Opaque links (IG/TikTok/X ids) with no metadata: the model can only guess, so they go to Misc for now. */

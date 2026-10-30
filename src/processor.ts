@@ -1,7 +1,7 @@
 import NetInfo from '@react-native-community/netinfo';
 import { Directory, File, Paths } from 'expo-file-system';
-import { analyzePost, AiError, isWeakText, sniffMime, translateBoardNames } from './core/ai';
-import { boardEmbedText, centroid, EMBED_PICK, LOW_CONFIDENCE, pickBoardByEmbedding, type AiBoard, type BoardChoice, type BoardVector } from './core/sorting';
+import { analyzePost, AiError, isWeakText, shouldSendImage, sniffMime, translateBoardNames } from './core/ai';
+import { boardEmbedText, centroid, EMBED_PICK, LOW_CONFIDENCE, pickBoard, pickBoardByEmbedding, prepareBoardVectors, type AiBoard, type BoardChoice, type BoardVector } from './core/sorting';
 import { fetchMetadata } from './core/metadata';
 import type { Metadata } from './core/types';
 import { detectPlatform, extraText, extractUrl, normalizeUrl } from './core/url';
@@ -16,12 +16,16 @@ import { aiMode, getGeminiAuth } from './aiAuth';
 import { canUseGemini } from './core/gemini';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 
-/** Re-encode the preview as JPEG ≤1080px wide so it stays well under the proxy's 1.5 MB image cap. */
-async function aiImage(uri: string): Promise<{ mimeType: string; data: string } | undefined> {
+/**
+ * Re-encode the preview as JPEG so it stays well under the proxy's 1.5 MB image cap.
+ * `maxWidth` 1080 for screenshots (small text must stay readable); 768 for covers/frames, where the subject is
+ * what matters and a smaller picture costs fewer tokens.
+ */
+async function aiImage(uri: string, maxWidth = 1080): Promise<{ mimeType: string; data: string } | undefined> {
   try {
     const src = uri.startsWith('file:') || uri.includes('://') ? uri : `file://${uri}`;
     const info = await manipulateAsync(src, []);
-    const actions = info.width > 1080 ? [{ resize: { width: 1080 } }] : [];
+    const actions = info.width > maxWidth ? [{ resize: { width: maxWidth } }] : [];
     const r = await manipulateAsync(src, actions, { compress: 0.8, format: SaveFormat.JPEG, base64: true });
     if (r.base64 && r.base64.length * 0.75 < 1_400_000) return { mimeType: 'image/jpeg', data: r.base64 };
   } catch {}
@@ -171,8 +175,8 @@ async function processOne(post: db.Post) {
     const note = p.note ?? undefined;
     // Weak caption (emoji/hashtags only) → let Gemini look at the cached preview image.
     let image: { mimeType: string; data: string } | undefined;
-    if (p.localImage && (p.shot || (st.aiVision && isWeakText(meta, sharedText, note)))) {
-      image = await aiImage(p.localImage);
+    if (p.localImage && shouldSendImage({ hasImage: true, shot: !!p.shot, aiVision: st.aiVision, meta, sharedText, note })) {
+      image = await aiImage(p.localImage, p.shot ? 1080 : 768);
     }
     const ai = await analyzePost({ meta, sharedText, boards, image, note, lang: st.aiLang, boardLang: getLang() }, auth);
     let choice: BoardChoice = ai.choice ?? { kind: 'misc', confidence: 0, reason: 'ai' };
@@ -435,10 +439,10 @@ export async function resortMisc(onProgress?: (p: ResortProgress) => void): Prom
   report();
   let boards = await db.aiBoards();
   // 1) embeddings (already computed for most posts)
-  const cands = await boardVectors(boards, auth);
+  const prep = prepareBoardVectors(await boardVectors(boards, auth)); // centered once, reused for every post
   const rest: db.Post[] = [];
   for (const p of todo) {
-    const pick = p.embedding?.length ? pickBoardByEmbedding(p.embedding, cands) : null;
+    const pick = p.embedding?.length ? pickBoard(p.embedding, prep) : null;
     if (pick) { await db.updatePost(p.id, { board_id: pick.id }); await db.clearEmbedding(p.id); res.moved++; res.checked++; report(); }
     else rest.push(p);
   }
@@ -450,7 +454,11 @@ export async function resortMisc(onProgress?: (p: ResortProgress) => void): Prom
     await idle();
     try {
       const meta: Metadata = { url: p.url, platform: p.platform, title: p.title ?? undefined, description: p.description ?? undefined, author: p.author ?? undefined, blocked: p.metaBlocked, unavailable: p.unavailable, source: 'db' };
-      const ai = await analyzePost({ meta, sharedText: p.rawText ?? undefined, note: p.note ?? undefined, boards, lang: getSettings().aiLang, boardLang: getLang() }, auth);
+      const sharedText = p.rawText ?? undefined, note = p.note ?? undefined;
+      // Same rule as for a new post: a thin caption means the picture decides. (Before 1.10.1 «Разобрать» never sent it.)
+      const image = p.localImage && shouldSendImage({ hasImage: true, shot: !!p.shot, aiVision: getSettings().aiVision, meta, sharedText, note })
+        ? await aiImage(p.localImage, p.shot ? 1080 : 768) : undefined;
+      const ai = await analyzePost({ meta, sharedText, note, boards, image, lang: getSettings().aiLang, boardLang: getLang() }, auth);
       let choice = ai.choice ?? { kind: 'misc', confidence: 0, reason: 'ai' } as BoardChoice;
       choice = await embeddingFallback(choice, boards, p, auth, p.embedding);
       if (choice.kind !== 'misc') {

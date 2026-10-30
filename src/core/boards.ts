@@ -11,6 +11,20 @@ export const DEFAULT_BOARDS: Record<string, { ru: string; en: string; uk: string
   productivity: { ru: 'Продуктивность', en: 'Productivity', uk: 'Продуктивність', emoji: '⚡' },
 };
 
+/**
+ * One-line "what belongs here" for each default board, shown to the model next to the name.
+ * Names alone ("Дизайн и UI") are too vague for posts that only hint at a topic.
+ * User-created boards have no hint: they are described by their frequent tags and recent post titles.
+ */
+export const BOARD_HINTS: Record<string, string> = {
+  misc: 'запасной вариант: только если тему не понять ни по тексту, ни по картинке',
+  'ai-tools': 'ChatGPT, Claude, Gemini, нейросети, промпты, ИИ-агенты, генерация картинок/видео/музыки',
+  programming: 'код, языки и фреймворки, GitHub, веб/мобильная разработка, DevOps, алгоритмы',
+  gadgets: 'телефоны, ноутбуки, часы, наушники, обзоры техники, умный дом, электроника',
+  design: 'UI/UX, Figma, шрифты, цвета, иллюстрации, брендинг, референсы',
+  productivity: 'заметки, планирование, привычки, тайм-менеджмент, Notion/Obsidian, автоматизация дел',
+};
+
 /** Legacy / AI spellings of the default boards (normalized: lowercase, no punctuation). */
 const SYNONYMS: Record<string, string[]> = {
   misc: ['miscellaneous', 'other', 'others', 'misc stuff', 'другое', 'прочее', 'разное и прочее', 'інше', 'різне інше', 'всякое', 'без темы', 'uncategorized', 'general', 'общее', 'загальне'],

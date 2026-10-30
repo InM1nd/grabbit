@@ -23,9 +23,9 @@ test('default boards are shown in the UI language, custom ones as stored', () =>
 test('prompt asks for board names in the UI language', () => {
   const meta = { url: 'https://example.com', platform: 'web' } as any;
   const en = buildPrompt({ meta, boards: ['Misc'], boardLang: 'en' });
-  assert.match(en, /in English/); assert.match(en, /"AI tools"/); assert.match(en, new RegExp(`"${miscName('en')}"`));
+  assert.match(en, /in English/); assert.match(en, /"Recipes"/); // 1.10.1: examples of *new* boards are topics without a default board assert.match(en, new RegExp(`"${miscName('en')}"`));
   assert.doesNotMatch(en, /"ИИ-инструменты"/);
   const uk = buildPrompt({ meta, boards: [], boardLang: 'uk' });
-  assert.match(uk, /"Програмування"/); assert.match(uk, /"Різне"/);
+  assert.match(uk, /«Рецепти»/); assert.match(uk, /"Різне"/);
   assert.match(buildPrompt({ meta, boards: [] }), /"Разное"/);
 });
