@@ -7,20 +7,22 @@ const geminiApiKey = aiProxyUrl ? '' : (process.env.GEMINI_API_KEY || '').trim()
 // In-app updates (optional): a READ-ONLY fine-grained token for the private repo, or a public manifest URL.
 // Never put the push token here.
 const updateToken = (process.env.PINBOX_UPDATE_TOKEN || '').trim();
+// Sentry DSN (public-by-design, crash reports only): injected from the build env, never committed.
+const sentryDsn = (process.env.GRABBIT_SENTRY_DSN || '').trim();
 const updateManifestUrl = (process.env.PINBOX_UPDATE_MANIFEST_URL || '').trim();
 
 const config: ExpoConfig = {
   name: 'Grabbit',
   slug: 'polka',
   scheme: 'pinbox',
-  version: '1.8.1',
+  version: '1.9.0',
   orientation: 'portrait',
   icon: './assets/icon.png',
   userInterfaceStyle: 'automatic',
   backgroundColor: '#FFFFFF',
   android: {
     package: 'com.zabolotny.polka',
-    versionCode: 17,
+    versionCode: 18,
     adaptiveIcon: {
       backgroundColor: '#F8483E',
       foregroundImage: './assets/android-icon-foreground.png',
@@ -75,7 +77,7 @@ const config: ExpoConfig = {
       { icon: './assets/notification-icon.png', color: '#F8483E', defaultChannel: 'reminders' },
     ],
   ],
-  extra: { aiProxyUrl, geminiApiKey, updateRepo: 'InM1nd/grabbit', updateToken, updateManifestUrl },
+  extra: { aiProxyUrl, geminiApiKey, updateRepo: 'InM1nd/grabbit', updateToken, updateManifestUrl, sentryDsn },
 };
 
 export default config;

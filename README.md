@@ -13,7 +13,7 @@ Built with Expo / React Native and TypeScript. UI languages: Russian, English, U
 - In-app updates from this repository's GitHub Releases.
 
 ## Privacy
-See [docs/PRIVACY.md](docs/PRIVACY.md). There are no accounts, ads or analytics.
+See [docs/PRIVACY.md](docs/PRIVACY.md). There are no accounts, ads or analytics; only anonymous crash reports (Sentry) without post content.
 
 ## Development
 Developer notes (in Russian) are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). Release history is in [RELEASE_NOTES.md](RELEASE_NOTES.md).

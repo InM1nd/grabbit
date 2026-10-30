@@ -14,6 +14,9 @@ _Обновлено / Updated: 2026-10-29 · версия приложения 1
 
 **Прочее.** Нет рекламы, аналитики и трекеров. Уведомления — локальные. Проверка обновлений обращается к GitHub Releases. Удаление приложения удаляет все его данные.
 
+### Отчёты о сбоях (Sentry)
+Начиная с версии 1.9.0 приложение отправляет в Sentry (sentry.io) отчёты только о сбоях и ошибках: тип ошибки, текст ошибки (ссылки и e-mail вырезаются), стек вызовов, версию приложения, модель устройства и версию Android. Не отправляются: содержимое постов, подписи, ссылки, заметки, скриншоты, история действий и навигации, IP-адрес (не сохраняется), идентификатор пользователя или устройства. Замеры производительности и запись сессий выключены.
+
 ## English
 
 **Stored on your phone.** All saved posts, boards, notes, tags, previews and screenshots live only in the app's storage on your device (SQLite and app files). There is no server database of your posts and no accounts.
@@ -25,3 +28,7 @@ _Обновлено / Updated: 2026-10-29 · версия приложения 1
 **Instagram login (optional).** Only needed to read private posts; public posts work without it. You log in on the official instagram.com page in an in-app web view. We never see or receive your password. Session cookies stay only in the app's web view on your phone and are used only to load posts you saved. "Log out of Instagram" in Settings deletes the cookies and the app's web data.
 
 **Other.** No ads, analytics or trackers. Notifications are local. Update checks contact GitHub Releases. Uninstalling the app deletes all its data.
+
+### Crash reports (Sentry)
+Since 1.9.0 the app sends crash and error reports only to Sentry (sentry.io): error type, error message (URLs and e-mails stripped), stack trace, app version, device model and Android version. Not sent: post content, captions, links, notes, screenshots, action/navigation history, IP address (not stored), any user or device ID. Performance tracing and session replay are disabled.
+
