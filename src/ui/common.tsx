@@ -14,10 +14,11 @@ export function IconBtn({ name, onPress, size = 22, color, label }: { name: any;
   );
 }
 
-export function Chip({ label, active, onPress, onLongPress }: { label: string; active?: boolean; onPress?: () => void; onLongPress?: () => void }) {
+export function Chip({ label, active, icon, onPress, onLongPress }: { label: string; active?: boolean; icon?: React.ComponentProps<typeof Ionicons>['name']; onPress?: () => void; onLongPress?: () => void }) {
   const c = useColors();
   return (
-    <Pressable onPress={onPress} onLongPress={onLongPress} style={[styles.chip, { backgroundColor: active ? c.chipActive : c.chip }]}>
+    <Pressable onPress={onPress} onLongPress={onLongPress} style={[styles.chip, { backgroundColor: active ? c.chipActive : c.chip }, !!icon && styles.chipWithIcon]}>
+      {!!icon && <Ionicons name={icon} size={15} color={active ? c.onChipActive : c.sub} />}
       <Text numberOfLines={1} style={[styles.chipText, { color: active ? c.onChipActive : c.text }]}>{label}</Text>
     </Pressable>
   );
@@ -82,6 +83,7 @@ export function PromptModal({ visible, title, placeholder, initial = '', okLabel
 
 const styles = StyleSheet.create({
   chip: { borderRadius: 18, paddingHorizontal: 14, height: 34, justifyContent: 'center', maxWidth: 220 },
+  chipWithIcon: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   chipText: { fontSize: 14, fontWeight: '500' },
   backdrop: { flex: 1, justifyContent: 'flex-end' },
   sheet: { borderTopLeftRadius: 22, borderTopRightRadius: 22, paddingTop: 8, paddingHorizontal: 8 },
@@ -98,7 +100,8 @@ const styles = StyleSheet.create({
   btn: { paddingHorizontal: 16, height: 40, borderRadius: 12, justifyContent: 'center' },
 });
 
-export const MARK_ICON = { try: 'flask-outline', done: 'checkmark-circle', skip: 'moon-outline' } as const;
+/** Status icons: the same outline set in filters, the post sheet and the long-press menu (cards use MARK_GLYPH badges). */
+export const MARK_ICON = { try: 'flask-outline', done: 'checkmark-circle-outline', skip: 'moon-outline' } as const;
 export const MARK_GLYPH = { try: 'flask', done: 'checkmark', skip: 'moon' } as const;
 export const MARK_COLOR = { try: '#F59E0B', done: '#16A34A', skip: '#71717A' } as const;
 export function markLabel(m: 'try' | 'done' | 'skip'): string {

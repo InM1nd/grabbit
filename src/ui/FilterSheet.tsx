@@ -6,9 +6,8 @@ import type { Board, Post } from '../db';
 import { activeCount, applyFilter, DEFAULT_FILTER, type FeedFilter, presentSources, type SourceKey, toggle } from '../core/filters';
 import { useColors } from '../theme';
 import { t } from '../i18n';
-import { Chip, markLabel } from './common';
+import { Chip, MARK_ICON, markLabel } from './common';
 
-const MARK_ICON = { try: '🧪', done: '✅', skip: '💤' } as const;
 export function sourceLabel(k: SourceKey): string {
   return k === 'instagram' ? 'Instagram' : k === 'tiktok' ? 'TikTok' : k === 'youtube' ? 'YouTube' : k === 'x' ? 'X' : k === 'shot' ? t('Скриншот') : t('Другое');
 }
@@ -69,7 +68,7 @@ export function FilterSheet({ visible, filter, posts, boards, onApply, onClose }
               {sec(t('Статус'))}
               <View style={styles.wrap}>
                 {(['try', 'done', 'skip'] as const).map((m) => (
-                  <Chip key={m} label={`${MARK_ICON[m]} ${markLabel(m)}`} active={draft.marks.includes(m)} onPress={() => setDraft({ ...draft, marks: toggle(draft.marks, m) })} />
+                  <Chip key={m} icon={MARK_ICON[m]} label={markLabel(m)} active={draft.marks.includes(m)} onPress={() => setDraft({ ...draft, marks: toggle(draft.marks, m) })} />
                 ))}
               </View>
               {!draft.marks.length && <Text style={[styles.hint, { color: c.faint }]}>{t('Без отметки «Неважно» — пока её не выберешь')}</Text>}
