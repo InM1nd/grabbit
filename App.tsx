@@ -23,6 +23,7 @@ import { BoardsScreen } from './src/ui/BoardsScreen';
 import { ActionSheet, IconBtn, MARK_ICON, markLabel } from './src/ui/common';
 import { DetailScreen } from './src/ui/DetailScreen';
 import { FeedScreen } from './src/ui/FeedScreen';
+import { MiscSorter } from './src/ui/MiscSorter';
 import { FilterSheet } from './src/ui/FilterSheet';
 import { applyFilter, DEFAULT_FILTER, type FeedFilter } from './src/core/filters';
 import { HiddenInstagramLoader, InstagramLoginModal } from './src/ui/InstagramWeb';
@@ -300,6 +301,7 @@ function Main() {
           <FeedScreen posts={visiblePosts} query={debQuery} semantic={semActive}
             filter={filter} onOpenFilters={() => setFiltersOpen(true)} onLongPress={setMarkPost}
             onOpen={openPost} onSwipeDelete={swipeDelete}
+            extraHeader={currentBoard?.key === 'misc' && !debQuery ? <MiscSorter posts={visiblePosts} onDone={(m) => { showToast({ msg: m }, 3500); reload(); }} /> : null}
             onRefresh={async () => { setRefreshing(true); await retryAllNow(); await reload(); setRefreshing(false); }} refreshing={refreshing} />
         ) : (
           <BoardsScreen boards={boards} unsortedCount={unsorted} onOpenBoard={(id) => { setBoardId(id); setTab('feed'); }} />

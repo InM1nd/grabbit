@@ -1,4 +1,5 @@
-import { DEFAULT_BOARDS, boardDisplayName, defaultBoardKey, miscName } from './core/boards';
+import { DEFAULT_BOARDS, boardDisplayName, defaultBoardKey, findBoardByName, miscName, type BoardLang } from './core/boards';
+import type { AiBoard, BoardChoice } from './core/sorting';
 import { getUiLang as getLang } from './core/uiLang';
 import * as SQLite from 'expo-sqlite';
 import type { Platform } from './core/types';
@@ -17,6 +18,8 @@ export interface Post {
   rawText: string | null;
   /** A screenshot was attached by the user (localImage is that screenshot). */
   shot?: boolean;
+  /** Put into Misc only because the post was closed; re-sorted once it gets content. */
+  needsResort?: boolean;
   platform: Platform;
   title: string | null;
   description: string | null;
@@ -105,6 +108,12 @@ export function getDb(): Promise<SQLite.SQLiteDatabase> {
         for (const [k, v] of Object.entries(DEFAULT_BOARDS)) await db.runAsync('UPDATE boards SET key = ? WHERE key IS NULL AND name = ? COLLATE NOCASE', k, v.ru);
       }
       if (!cols.includes('shot')) await db.execAsync('ALTER TABLE posts ADD COLUMN shot INTEGER NOT NULL DEFAULT 0');
+      // v6 (1.10.0): translations for the user's/AI boards, re-sort flag for closed posts parked in Misc
+      if (!cols.includes('needs_resort')) await db.execAsync('ALTER TABLE posts ADD COLUMN needs_resort INTEGER NOT NULL DEFAULT 0');
+      for (const c of ['name_ru', 'name_en', 'name_uk']) if (!bcols.includes(c)) await db.execAsync(`ALTER TABLE boards ADD COLUMN ${c} TEXT`);
+      // tr_done: 0 = translate once by AI, 1 = has translations or is the user's own name (never touch)
+      if (!bcols.includes('tr_done')) await db.execAsync('ALTER TABLE boards ADD COLUMN tr_done INTEGER NOT NULL DEFAULT 0');
+      await rekeyLegacyBoards(db);
       await db.execAsync('PRAGMA foreign_keys = ON;');
       return db;
     })();
@@ -123,13 +132,35 @@ function cachedVec(id: number, raw: string | null): number[] | null {
   return vec;
 }
 
+/**
+ * Legacy default boards with a different spelling ("Другое", "ИИ инструменты", "Дизайн"…) get their key.
+ * If the keyed board already exists, the legacy one is merged into it. Idempotent, runs on every start; boards the user created or renamed (tr_done = 1) are left alone.
+ */
+export async function rekeyLegacyBoards(db: SQLite.SQLiteDatabase) {
+  const rows = await db.getAllAsync<{ id: number; name: string }>('SELECT id, name FROM boards WHERE key IS NULL AND tr_done = 0');
+  for (const r of rows) {
+    const k = defaultBoardKey(r.name);
+    if (!k) continue;
+    const owner = await db.getFirstAsync<{ id: number }>('SELECT id FROM boards WHERE key = ?', k);
+    if (owner) {
+      await db.runAsync('UPDATE posts SET board_id = ? WHERE board_id = ?', owner.id, r.id);
+      await db.runAsync('DELETE FROM boards WHERE id = ?', r.id);
+    } else {
+      await db.runAsync('UPDATE boards SET key = ?, tr_done = 1 WHERE id = ?', k, r.id);
+    }
+  }
+}
+
+const trOf = (r: any) => ({ ru: r.name_ru, en: r.name_en, uk: r.name_uk });
+const showName = (r: any, lang: BoardLang = getLang()) => boardDisplayName(r.name, r.key, lang, trOf(r));
+
 function rowToPost(r: any): Post {
   let tags: string[] = [];
   try { tags = JSON.parse(r.tags || '[]'); } catch {}
   return {
     id: r.id, url: r.url, rawText: r.raw_text, platform: r.platform,
     title: r.title, description: r.description, author: r.author, image: r.image, localImage: r.local_image,
-    metaFetched: !!r.meta_fetched, shot: !!r.shot, metaBlocked: !!r.meta_blocked, unavailable: !!r.unavailable, note: r.note ?? null,
+    metaFetched: !!r.meta_fetched, shot: !!r.shot, needsResort: !!r.needs_resort, metaBlocked: !!r.meta_blocked, unavailable: !!r.unavailable, note: r.note ?? null,
     aiTitle: r.ai_title, summary: r.summary, tags, boardId: r.board_id,
     status: r.status, attempts: r.attempts, nextTryAt: r.next_try_at, lastError: r.last_error,
     createdAt: r.created_at, openedAt: r.opened_at, remindedAt: r.reminded_at,
@@ -175,11 +206,11 @@ export async function listPosts(opts: { boardId?: number | null; query?: string;
   if (opts.boardId != null) { where.push('p.board_id = ?'); params.push(opts.boardId); }
   const q = (opts.query || '').trim().toLowerCase();
   const rows = await db.getAllAsync(
-    `SELECT p.*, b.name AS board_name, b.key AS board_key FROM posts p LEFT JOIN boards b ON b.id = p.board_id
+    `SELECT p.*, b.name AS board_name, b.key AS board_key, b.name_ru AS b_ru, b.name_en AS b_en, b.name_uk AS b_uk FROM posts p LEFT JOIN boards b ON b.id = p.board_id
      ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY p.created_at DESC`,
     ...params,
   );
-  let posts = rows.map((r: any) => ({ post: rowToPost(r), board: r.board_name ? boardDisplayName(r.board_name, r.board_key, getLang()) : '' }));
+  let posts = rows.map((r: any) => ({ post: rowToPost(r), board: r.board_name ? boardDisplayName(r.board_name, r.board_key, getLang(), { ru: r.b_ru, en: r.b_en, uk: r.b_uk }) : '' }));
   if (q) {
     // SQLite LOWER() only folds ASCII, so filter in JS to handle Cyrillic properly.
     const terms = q.split(/\s+/).filter(Boolean);
@@ -233,13 +264,78 @@ export async function listBoards(): Promise<Board[]> {
     if (arr.length < 3) arr.push(c.img);
     byBoard.set(c.board_id, arr);
   }
-  return rows.map((r) => ({ id: r.id, name: boardDisplayName(r.name, r.key, getLang()), key: r.key ?? null, emoji: r.emoji, createdAt: r.created_at, count: r.cnt, covers: byBoard.get(r.id) || [] }));
+  return rows.map((r) => ({ id: r.id, name: showName(r), key: r.key ?? null, emoji: r.emoji, createdAt: r.created_at, count: r.cnt, covers: byBoard.get(r.id) || [] }));
 }
 
 export async function boardNames(): Promise<string[]> {
   const db = await getDb();
-  const rows = await db.getAllAsync<{ name: string; key: string | null }>('SELECT name, key FROM boards ORDER BY name');
-  return rows.map((r) => boardDisplayName(r.name, r.key, getLang()));
+  const rows = await db.getAllAsync<any>('SELECT * FROM boards ORDER BY name');
+  return rows.map((r) => showName(r));
+}
+
+/** Boards as the AI sees them: id, name in the UI language, all names, and the most frequent tags. */
+export async function aiBoards(): Promise<AiBoard[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<any>('SELECT * FROM boards ORDER BY id');
+  const tagRows = await db.getAllAsync<{ board_id: number; tags: string }>("SELECT board_id, tags FROM posts WHERE board_id IS NOT NULL AND status = 'done' ORDER BY created_at DESC LIMIT 1500");
+  const freq = new Map<number, Map<string, number>>();
+  const count = new Map<number, number>();
+  for (const r of tagRows) {
+    count.set(r.board_id, (count.get(r.board_id) ?? 0) + 1);
+    let tags: string[] = [];
+    try { tags = JSON.parse(r.tags || '[]'); } catch {}
+    const m = freq.get(r.board_id) ?? new Map<string, number>();
+    for (const t of tags) m.set(t, (m.get(t) ?? 0) + 1);
+    freq.set(r.board_id, m);
+  }
+  return rows.map((r) => ({
+    id: r.id, name: showName(r), key: r.key ?? null, nameRu: r.name_ru, nameEn: r.name_en, nameUk: r.name_uk,
+    count: count.get(r.id) ?? 0,
+    tags: r.key === 'misc' ? [] : [...(freq.get(r.id) ?? new Map()).entries()].filter(([, n]) => n >= 2 || (count.get(r.id) ?? 0) < 4).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([t]) => t),
+  }));
+}
+
+/** The Misc board's id (created on demand). */
+export async function miscBoardId(): Promise<number> {
+  return getOrCreateBoard(DEFAULT_BOARDS.misc.ru, DEFAULT_BOARDS.misc.emoji);
+}
+
+/** Board for an AI decision. New boards store all three names so they follow the UI language. */
+export async function boardForChoice(choice: BoardChoice, emoji?: string | null): Promise<number> {
+  if (choice.kind === 'existing') {
+    const db = await getDb();
+    if (await db.getFirstAsync('SELECT id FROM boards WHERE id = ?', choice.id)) return choice.id;
+    return miscBoardId();
+  }
+  if (choice.kind === 'misc') return miscBoardId();
+  const db = await getDb();
+  const all = await db.getAllAsync<any>('SELECT * FROM boards');
+  const named = all.map((r) => ({ id: r.id, name: r.name, key: r.key, nameRu: r.name_ru, nameEn: r.name_en, nameUk: r.name_uk }));
+  for (const n of [choice.names.ru, choice.names.en, choice.names.uk]) {
+    const ex = findBoardByName(n, named);
+    if (ex) return ex.id;
+  }
+  const key = defaultBoardKey(choice.names.en) ?? defaultBoardKey(choice.names.ru);
+  if (key) return getOrCreateBoard(DEFAULT_BOARDS[key].ru, emoji);
+  const name = (choice.names[getLang()] || choice.names.en).slice(0, 40);
+  const r = await db.runAsync('INSERT INTO boards (name, emoji, created_at, key, name_ru, name_en, name_uk, tr_done) VALUES (?, ?, ?, NULL, ?, ?, ?, ?)',
+    name, choice.emoji ?? emoji ?? null, Date.now(), choice.names.ru.slice(0, 40), choice.names.en.slice(0, 40), choice.names.uk.slice(0, 40), choice.partial ? 0 : 1);
+  emitDataChanged();
+  return Number(r.lastInsertRowId);
+}
+
+/** Keyless boards whose names were never translated (AI boards from before 1.10.0). */
+export async function boardsNeedingTranslation(limit = 40): Promise<{ id: number; name: string }[]> {
+  const db = await getDb();
+  return db.getAllAsync<{ id: number; name: string }>('SELECT id, name FROM boards WHERE key IS NULL AND tr_done = 0 ORDER BY id LIMIT ?', limit);
+}
+
+export async function setBoardTranslations(id: number, tr: { ru: string; en: string; uk: string } | null) {
+  const db = await getDb();
+  // Only fill boards that are still untranslated: a rename in the meantime wins.
+  if (tr) await db.runAsync('UPDATE boards SET name_ru = ?, name_en = ?, name_uk = ?, tr_done = 1 WHERE id = ? AND tr_done = 0 AND key IS NULL', tr.ru.slice(0, 40), tr.en.slice(0, 40), tr.uk.slice(0, 40), id);
+  else await db.runAsync('UPDATE boards SET tr_done = 1 WHERE id = ? AND tr_done = 0', id);
+  emitDataChanged();
 }
 
 export async function getOrCreateBoard(name: string, emoji?: string | null): Promise<number> {
@@ -247,13 +343,15 @@ export async function getOrCreateBoard(name: string, emoji?: string | null): Pro
   const clean = name.trim().slice(0, 40) || miscName(getLang());
   // Default boards are matched by key in any language, so "Misc" and "Разное" are one board.
   const key = defaultBoardKey(clean);
-  const ex = (key ? await db.getFirstAsync<{ id: number; emoji: string | null }>('SELECT id, emoji FROM boards WHERE key = ?', key) : null)
+  let ex = (key ? await db.getFirstAsync<{ id: number; emoji: string | null }>('SELECT id, emoji FROM boards WHERE key = ?', key) : null)
     ?? await db.getFirstAsync<{ id: number; emoji: string | null }>('SELECT id, emoji FROM boards WHERE name = ?', key ? DEFAULT_BOARDS[key].ru : clean);
+  if (!ex && !key) ex = await db.getFirstAsync<{ id: number; emoji: string | null }>('SELECT id, emoji FROM boards WHERE name_ru = ? COLLATE NOCASE OR name_en = ? COLLATE NOCASE OR name_uk = ? COLLATE NOCASE', clean, clean, clean);
   if (ex) {
     if (!ex.emoji && emoji) await db.runAsync('UPDATE boards SET emoji = ? WHERE id = ?', emoji, ex.id);
     return ex.id;
   }
-  const r = await db.runAsync('INSERT INTO boards (name, emoji, created_at, key) VALUES (?, ?, ?, ?)', key ? DEFAULT_BOARDS[key].ru : clean, emoji ?? (key ? DEFAULT_BOARDS[key].emoji : null), Date.now(), key);
+  // Created by the user (or by name): it is their own wording, never machine-translated.
+  const r = await db.runAsync('INSERT INTO boards (name, emoji, created_at, key, tr_done) VALUES (?, ?, ?, ?, 1)', key ? DEFAULT_BOARDS[key].ru : clean, emoji ?? (key ? DEFAULT_BOARDS[key].emoji : null), Date.now(), key);
   emitDataChanged();
   return Number(r.lastInsertRowId);
 }
@@ -271,10 +369,11 @@ export async function renameBoard(id: number, name: string, emoji?: string | nul
     await db.runAsync('DELETE FROM boards WHERE id = ?', id);
   } else {
     // A renamed board becomes the user's own: drop the key unless the name is unchanged.
-    const cur = await db.getFirstAsync<{ name: string; key: string | null }>('SELECT name, key FROM boards WHERE id = ?', id);
-    const same = cur?.key && boardDisplayName(cur.name, cur.key, getLang()) === clean;
+    const cur = await db.getFirstAsync<any>('SELECT * FROM boards WHERE id = ?', id);
+    const same = cur && showName(cur) === clean;
     if (same) await db.runAsync('UPDATE boards SET emoji = COALESCE(?, emoji) WHERE id = ?', emoji ?? null, id);
-    else await db.runAsync('UPDATE boards SET name = ?, key = NULL, emoji = COALESCE(?, emoji) WHERE id = ?', clean, emoji ?? null, id);
+    // A real rename makes it the user's own board: their wording in every language, no auto-translation.
+    else await db.runAsync('UPDATE boards SET name = ?, key = NULL, name_ru = NULL, name_en = NULL, name_uk = NULL, tr_done = 1, emoji = COALESCE(?, emoji) WHERE id = ?', clean, emoji ?? null, id);
   }
   emitDataChanged();
 }
@@ -324,11 +423,11 @@ export async function unopenedPosts(): Promise<Post[]> {
 export async function postsNeedingEmbedding(limit = 32): Promise<(Post & { boardName: string })[]> {
   const db = await getDb();
   const rows = await db.getAllAsync(
-    `SELECT p.*, b.name AS board_name, b.key AS board_key FROM posts p LEFT JOIN boards b ON b.id = p.board_id
+    `SELECT p.*, b.name AS board_name, b.key AS board_key, b.name_ru AS b_ru, b.name_en AS b_en, b.name_uk AS b_uk FROM posts p LEFT JOIN boards b ON b.id = p.board_id
      WHERE p.status = 'done' AND (p.embedding IS NULL OR p.embed_model IS NULL OR p.embed_model != ?)
      ORDER BY p.created_at DESC LIMIT ?`, EMBED_MODEL, limit,
   );
-  return rows.map((r: any) => ({ ...rowToPost(r), boardName: r.board_name ? boardDisplayName(r.board_name, r.board_key, getLang()) : '' }));
+  return rows.map((r: any) => ({ ...rowToPost(r), boardName: r.board_name ? boardDisplayName(r.board_name, r.board_key, getLang(), { ru: r.b_ru, en: r.b_en, uk: r.b_uk }) : '' }));
 }
 
 export async function setEmbedding(id: number, packed: string | null) {
@@ -341,4 +440,22 @@ export async function setEmbedding(id: number, packed: string | null) {
 export async function clearEmbedding(id: number) {
   const db = await getDb();
   await db.runAsync('UPDATE posts SET embedding = NULL, embed_model = NULL WHERE id = ?', id);
+}
+
+/** Done posts in the Misc board (for «Разобрать Misc»), oldest first. */
+export async function miscPosts(): Promise<Post[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync("SELECT p.* FROM posts p JOIN boards b ON b.id = p.board_id WHERE b.key = 'misc' AND p.status = 'done' ORDER BY p.created_at ASC");
+  return rows.map(rowToPost);
+}
+
+/** Embedded, sorted posts per board (for centroids). Misc is excluded. */
+export async function boardEmbeddings(): Promise<{ boardId: number; vec: number[] }[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<any>(
+    `SELECT p.id, p.board_id, p.embedding FROM posts p JOIN boards b ON b.id = p.board_id
+     WHERE (b.key IS NULL OR b.key != 'misc') AND p.embed_model = ? AND p.embedding IS NOT NULL AND p.embedding != '[]'
+     ORDER BY p.created_at DESC LIMIT 2000`, EMBED_MODEL,
+  );
+  return rows.map((r) => ({ boardId: r.board_id, vec: cachedVec(r.id, r.embedding) })).filter((x): x is { boardId: number; vec: number[] } => !!x.vec?.length);
 }

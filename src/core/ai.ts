@@ -1,4 +1,5 @@
 import { DEFAULT_BOARDS, miscName, type BoardLang } from './boards';
+import { buildTranslatePrompt, parseTranslations, resolveBoard, type AiBoard, type BoardChoice } from './sorting';
 import type { AiResult, Metadata } from './types';
 import { PLATFORM_LABEL } from './url';
 import { canUseGemini, geminiTarget, proxyLimitInfo, type GeminiAuth } from './gemini';
@@ -48,7 +49,8 @@ export class AiError extends Error {
 export interface AiInput {
   meta: Metadata;
   sharedText?: string;
-  boards: string[]; // existing board names
+  /** Existing boards (id + display name + frequent tags). Plain names are accepted for old callers/tests. */
+  boards: (AiBoard | string)[];
   /** Preview image (base64) — sent when the caption is weak so Gemini can "look" at the post. */
   image?: { mimeType: string; data: string };
   /** Free-text note the user typed about the post. */
@@ -78,23 +80,41 @@ export function isWeakText(meta: Metadata, sharedText?: string, note?: string): 
   return txt.split(' ').filter((w) => w.length > 2).length < 8;
 }
 
-const SCHEMA = {
+/** Must stay identical to server/lib/validate.ts RESPONSE_SCHEMA (the proxy enforces its own copy). */
+export const SCHEMA = {
   type: 'OBJECT',
   properties: {
     title: { type: 'STRING', description: 'Короткий заголовок, до 60 символов' },
     summary: { type: 'STRING', description: '1–3 предложения: о чём пост и чем полезен' },
     tags: { type: 'ARRAY', items: { type: 'STRING' }, description: '3–6 тегов, строчными буквами' },
-    board: { type: 'STRING', description: 'Название доски' },
+    board: { type: 'STRING', description: 'Название выбранной доски' },
     boardEmoji: { type: 'STRING', description: 'Один эмодзи для доски' },
+    boardId: { type: 'STRING', description: 'id существующей доски из списка, или "new"' },
+    confidence: { type: 'NUMBER', description: 'Уверенность в выборе доски, 0..1' },
+    newBoard: { type: 'OBJECT', properties: { ru: { type: 'STRING' }, en: { type: 'STRING' }, uk: { type: 'STRING' } }, required: ['ru', 'en', 'uk'] },
+    boardNames: { type: 'ARRAY', items: { type: 'OBJECT', properties: { id: { type: 'INTEGER' }, ru: { type: 'STRING' }, en: { type: 'STRING' }, uk: { type: 'STRING' } }, required: ['id', 'ru', 'en', 'uk'] } },
   },
   required: ['title', 'summary', 'tags', 'board'],
 };
 
-export function buildPrompt({ meta, sharedText, boards, image, note, lang = 'ru', boardLang = 'ru' }: AiInput): string {
+const asBoards = (list: (AiBoard | string)[]): AiBoard[] => list.map((b, i) => (typeof b === 'string' ? { id: i + 1, name: b } : b));
+/** Board list for the prompt; tags are trimmed so the whole prompt stays under the proxy's 12k chars. */
+export function boardLines(boards: AiBoard[], budget = 4500): string[] {
+  for (const n of [5, 3, 0]) {
+    const lines = boards.slice(0, 80).map((b) => `- id=${b.id}: ${q(b.name)}${n && b.tags?.length ? ` — теги: ${b.tags.slice(0, n).map((t) => t.slice(0, 20)).join(', ')}` : ''}`);
+    if (lines.join('\n').length <= budget || n === 0) return lines;
+  }
+  return [];
+}
+const q = (s: string) => `"${s.replace(/"/g, "'").slice(0, 40)}"`;
+
+export function buildPrompt({ meta, sharedText, boards: rawBoards, image, note, lang = 'ru', boardLang = 'ru' }: AiInput): string {
   const L = LANG_PHRASE[lang];
   const BL = BOARD_LANG_PHRASE[boardLang];
+  const boards = asBoards(rawBoards);
   const examples = Object.entries(DEFAULT_BOARDS).filter(([k]) => k !== 'misc').map(([, v]) => `"${v[boardLang]}"`).join(', ');
-  const misc = miscName(boardLang);
+  const misc = boards.find((b) => b.key === 'misc');
+  const miscLabel = misc ? `id=${misc.id} (${q(miscName(boardLang))})` : q(miscName(boardLang));
   const lines = [
     'Ты помогаешь вести личный органайзер сохранённых постов из соцсетей (как Pinterest).',
     'Пользователь в основном сохраняет посты про технологии: ИИ-инструменты, программирование, гаджеты, дизайн, стартапы, но может быть что угодно.',
@@ -102,11 +122,15 @@ export function buildPrompt({ meta, sharedText, boards, image, note, lang = 'ru'
     `1) title — короткий понятный заголовок ${L} (до 60 символов), без кликбейта;`,
     `2) summary — 1–3 предложения ${L}: о чём пост и что из него можно взять. Если данных мало, честно опиши, что известно (платформа, автор), не выдумывай детали;`,
     `3) tags — 3–6 коротких тегов строчными буквами ${L} (названия продуктов/технологий можно латиницей, например "chatgpt", "react");`,
-    `4) board — тематическая доска. ОБЯЗАТЕЛЬНО выбери одну из существующих досок, если пост к ней подходит по смыслу (верни её название точно как в списке). Новую доску создавай только если ни одна не подходит: 1–3 слова ${BL}, широкая тема (например ${examples}), а не узкая под один пост;`,
-    `   Не притягивай пост к существующей доске по формальному признаку (платформа, «интернет») — доска должна отражать тему содержания. Если о содержании почти ничего не известно, выбери доску "${misc}".`,
+    '4) доска. Сначала пойми тему поста (по тексту, картинке, тегам, автору), потом сравни её с досками из списка (у каждой указаны частые теги).',
+    '   • Если тема подходит к существующей доске хотя бы в целом — верни её id в boardId (только число из списка) и её название в board. Предпочитай существующие доски.',
+    `   • Если ни одна не подходит, а тема ясна — boardId "new", newBoard {ru, en, uk}: широкая тема в 1–3 слова на всех трёх языках (например ${examples}), не узкая под один пост; board — название ${BL}.`,
+    `   • Доска ${miscLabel} — только когда тему поста действительно невозможно понять. Если тема понятна, не выбирай её.`,
+    '   • confidence — насколько ты уверен в выборе доски, от 0 до 1.',
     '5) boardEmoji — один эмодзи для доски.',
     '',
-    `Существующие доски: ${boards.length ? boards.map((b) => `"${b}"`).join(', ') : '(пока нет)'}`,
+    'Существующие доски:',
+    ...(boards.length ? boardLines(boards) : ['(пока нет)']),
     '',
     `Платформа: ${PLATFORM_LABEL[meta.platform]}`,
     `Ссылка: ${meta.url}`,
@@ -122,10 +146,9 @@ export function buildPrompt({ meta, sharedText, boards, image, note, lang = 'ru'
   return lines.join('\n');
 }
 
-function matchBoard(name: string, boards: string[]): string {
-  const n = name.trim().replace(/^["«]|["»]$/g, '');
-  const low = n.toLowerCase();
-  return boards.find((b) => b.toLowerCase() === low) ?? n;
+/** Opaque links (IG/TikTok/X ids) with no metadata: the model can only guess, so they go to Misc for now. */
+export function isOpaque(input: Pick<AiInput, 'meta' | 'sharedText' | 'note' | 'image'>): boolean {
+  return !!input.meta.blocked && !input.sharedText && !input.note && !input.image && ['instagram', 'tiktok', 'x', 'threads', 'facebook'].includes(input.meta.platform);
 }
 
 /**
@@ -135,9 +158,47 @@ function matchBoard(name: string, boards: string[]): string {
  * `timeoutMs` is per request; `budgetMs` caps the whole call.
  */
 export async function analyzePost(input: AiInput, auth: GeminiAuth, timeoutMs = 12000, budgetMs = 45000): Promise<AiResult> {
+  const boards = asBoards(input.boards);
+  const lang = input.boardLang ?? 'ru';
+  return generateJson(buildPrompt(input), input.image, auth, timeoutMs, budgetMs, (parsed, model) => {
+    const summary = String(parsed?.summary || '').trim();
+    if (summary.length < 10) return null;
+    const tags: string[] = Array.isArray(parsed.tags)
+      ? [...new Set<string>(parsed.tags.map((t: any) => String(t).toLowerCase().replace(/^#/, '').trim()).filter(Boolean))].slice(0, 6)
+      : [];
+    const choice: BoardChoice = isOpaque(input)
+      ? { kind: 'misc', confidence: 0, reason: 'forced' }
+      : resolveBoard(parsed, boards, lang);
+    const hit = choice.kind === 'existing' ? boards.find((b) => b.id === choice.id) : undefined;
+    const board = choice.kind === 'existing' ? hit!.name : choice.kind === 'new' ? choice.names[lang] : (boards.find((b) => b.key === 'misc')?.name ?? miscName(lang));
+    return {
+      title: parsed.title ? String(parsed.title).trim().slice(0, 90) : undefined,
+      summary,
+      tags,
+      board,
+      choice,
+      boardEmoji: choice.kind === 'misc' ? '🗂️' : parsed.boardEmoji ? String(parsed.boardEmoji).trim().slice(0, 4) : undefined,
+      model,
+    };
+  });
+}
+
+/**
+ * One-off: translate the names of the user's own boards (created before 1.10.0) into RU/EN/UK.
+ * Uses one analysis request for up to 40 boards.
+ */
+export async function translateBoardNames(boards: { id: number; name: string }[], auth: GeminiAuth): Promise<Map<number, { ru: string; en: string; uk: string }>> {
+  const ids = boards.map((b) => b.id);
+  return generateJson(buildTranslatePrompt(boards), undefined, auth, 15000, 40000, (parsed) => {
+    const m = parseTranslations(parsed, ids);
+    return m.size ? m : null;
+  });
+}
+
+async function generateJson<T>(prompt: string, image: AiInput['image'], auth: GeminiAuth, timeoutMs: number, budgetMs: number, accept: (parsed: any, model: string) => T | null): Promise<T> {
   if (!canUseGemini(auth)) throw new AiError('Нет ключа Gemini', false);
   const started = Date.now();
-  const prompt = buildPrompt(input);
+  const input = { image };
   const bodyFor = (model: string) => JSON.stringify({
     contents: [{ role: 'user', parts: [
       { text: prompt },
@@ -155,7 +216,7 @@ export async function analyzePost(input: AiInput, auth: GeminiAuth, timeoutMs = 
   let anyAttempt = false;
   const transient: string[] = [];
 
-  const tryModel = async (model: string): Promise<AiResult | null> => {
+  const tryModel = async (model: string): Promise<T | null> => {
     const left = budgetMs - (Date.now() - started);
     if (left < 2000) return null;
     anyAttempt = true;
@@ -193,26 +254,13 @@ export async function analyzePost(input: AiInput, auth: GeminiAuth, timeoutMs = 
         lastErr = new AiError(`Gemini: неполный ответ (${cand?.finishReason || 'пусто'})`, true);
         return null;
       }
-      const summary = String(parsed?.summary || '').trim();
-      if (!parsed || typeof parsed !== 'object' || summary.length < 10) {
+      const res = parsed && typeof parsed === 'object' ? accept(parsed, j.modelVersion || model) : null;
+      if (!res) {
         transient.push(model);
         lastErr = new AiError('Gemini: пустой ответ', true);
         return null;
       }
-      const tags: string[] = Array.isArray(parsed.tags)
-        ? [...new Set<string>(parsed.tags.map((t: any) => String(t).toLowerCase().replace(/^#/, '').trim()).filter(Boolean))].slice(0, 6)
-        : [];
-      // Opaque links (IG/TikTok/X ids) with no metadata: don't let the model guess a topic board.
-      const opaque = input.meta.blocked && !input.sharedText && !input.note && !input.image && ['instagram', 'tiktok', 'x', 'threads', 'facebook'].includes(input.meta.platform);
-      if (opaque) { parsed.board = miscName(input.boardLang ?? 'ru'); parsed.boardEmoji = '🗂️'; }
-      return {
-        title: parsed.title ? String(parsed.title).trim().slice(0, 90) : undefined,
-        summary,
-        tags,
-        board: matchBoard(String(parsed.board || miscName(input.boardLang ?? 'ru')), input.boards) || miscName(input.boardLang ?? 'ru'),
-        boardEmoji: parsed.boardEmoji ? String(parsed.boardEmoji).trim().slice(0, 4) : undefined,
-        model: j.modelVersion || model,
-      };
+      return res;
     } catch (e: any) {
       if (e instanceof AiError && e.limit) throw e;
       // network error / timeout → retry later

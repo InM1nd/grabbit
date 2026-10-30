@@ -18,9 +18,11 @@ interface Props {
   onSwipeDelete: (p: Post) => void;
   onRefresh: () => void;
   refreshing: boolean;
+  /** Extra content above the posts (e.g. the «Разобрать Misc» card). */
+  extraHeader?: React.ReactNode;
 }
 
-export function FeedScreen({ posts, query, semantic, filter, onOpenFilters, onLongPress, onOpen, onSwipeDelete, onRefresh, refreshing }: Props) {
+export function FeedScreen({ posts, query, semantic, filter, onOpenFilters, onLongPress, onOpen, onSwipeDelete, onRefresh, refreshing, extraHeader }: Props) {
   const c = useColors();
   const header = (
     <>
@@ -28,6 +30,7 @@ export function FeedScreen({ posts, query, semantic, filter, onOpenFilters, onLo
       <Text style={[styles.count, { color: c.sub }]}>{t('Постов: {n}', { n: posts.length })}</Text>
       <FilterButton filter={filter} onPress={onOpenFilters} />
     </View>
+    {extraHeader}
     {!!query && semantic && <Text style={[styles.hint, { color: c.sub }]}>{t('✨ Поиск по смыслу — самые близкие сверху')}</Text>}
     </>
   );

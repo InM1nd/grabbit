@@ -1,6 +1,7 @@
 import NetInfo from '@react-native-community/netinfo';
 import { Directory, File, Paths } from 'expo-file-system';
-import { analyzePost, AiError, isWeakText, sniffMime } from './core/ai';
+import { analyzePost, AiError, isWeakText, sniffMime, translateBoardNames } from './core/ai';
+import { boardEmbedText, centroid, EMBED_PICK, LOW_CONFIDENCE, pickBoardByEmbedding, type AiBoard, type BoardChoice, type BoardVector } from './core/sorting';
 import { fetchMetadata } from './core/metadata';
 import type { Metadata } from './core/types';
 import { detectPlatform, extraText, extractUrl, normalizeUrl } from './core/url';
@@ -98,6 +99,7 @@ export function processQueue(onlyId?: number): Promise<void> {
       }
       await idle();
       await backfillEmbeddings();
+      await translateLegacyBoards().catch(() => {});
     } finally {
       running = null;
     }
@@ -164,7 +166,7 @@ async function processOne(post: db.Post) {
     return;
   }
   try {
-    const boards = await db.boardNames();
+    const boards = await db.aiBoards();
     const sharedText = p.rawText ?? undefined;
     const note = p.note ?? undefined;
     // Weak caption (emoji/hashtags only) → let Gemini look at the cached preview image.
@@ -173,14 +175,20 @@ async function processOne(post: db.Post) {
       image = await aiImage(p.localImage);
     }
     const ai = await analyzePost({ meta, sharedText, boards, image, note, lang: st.aiLang, boardLang: getLang() }, auth);
+    let choice: BoardChoice = ai.choice ?? { kind: 'misc', confidence: 0, reason: 'ai' };
+    choice = await embeddingFallback(choice, boards, { ...p, aiTitle: ai.title ?? null, summary: ai.summary, tags: ai.tags, description: meta.description ?? null, author: meta.author ?? null }, auth);
     const defaultBoard = st.defaultBoardId != null && (await db.listBoards()).some((b) => b.id === st.defaultBoardId) ? st.defaultBoardId : null;
-    const boardId = defaultBoard ?? (await db.getOrCreateBoard(ai.board, ai.boardEmoji));
+    const boardId = defaultBoard ?? (await db.boardForChoice(choice, ai.boardEmoji));
     const cur = await db.getPost(p.id);
     if (!cur) return; // deleted meanwhile
+    const miscId = boards.find((b) => b.key === 'misc')?.id;
+    // Keep a board the user picked (manually or while we were working); only an auto-placement
+    // in Misc (or no board yet) is replaced by the new decision.
+    const replace = cur.boardId == null || (cur.boardId === p.boardId && (p.needsResort || cur.boardId === miscId));
     await db.updatePost(p.id, {
       ai_title: ai.title ?? null, summary: ai.summary, tags: ai.tags,
-      // keep a board the user picked manually while we were working
-      board_id: cur.boardId ?? boardId,
+      board_id: replace ? boardId : cur.boardId,
+      needs_resort: choice.kind === 'misc' && choice.reason === 'forced' && !defaultBoard ? 1 : 0,
       status: 'done', last_error: null, attempts: p.attempts + 1,
     });
     await db.clearEmbedding(p.id); // content changed → (re)embed in backfillEmbeddings()
@@ -330,4 +338,136 @@ export async function latestClosedPost(): Promise<db.Post | null> {
   const d = await db.getDb();
   const r = await d.getFirstAsync<{ id: number }>("SELECT id FROM posts WHERE (unavailable = 1 OR meta_blocked = 1) AND shot = 0 AND created_at > ? ORDER BY created_at DESC LIMIT 1", Date.now() - 3 * 86400_000);
   return r ? db.getPost(r.id) : null;
+}
+
+// ---------- Board sorting helpers (1.10.0) ----------
+
+/** board text → name embedding; recomputed only when a board's name/tags change. */
+const nameVecCache = new Map<string, number[]>();
+
+/** Centroids for boards with enough embedded posts, name embeddings for the rest. Misc never competes. */
+async function boardVectors(boards: AiBoard[], auth: Awaited<ReturnType<typeof getGeminiAuth>>): Promise<BoardVector[]> {
+  const byBoard = new Map<number, number[][]>();
+  for (const e of await db.boardEmbeddings()) { const a = byBoard.get(e.boardId) ?? []; if (a.length < 60) a.push(e.vec); byBoard.set(e.boardId, a); }
+  const out: BoardVector[] = [];
+  const needName: { b: AiBoard; text: string }[] = [];
+  for (const b of boards) {
+    if (b.key === 'misc') continue;
+    const vs = byBoard.get(b.id) ?? [];
+    const c = vs.length >= EMBED_PICK.minPosts ? centroid(vs) : null;
+    if (c) { out.push({ id: b.id, vec: c, kind: 'centroid' }); continue; }
+    const text = boardEmbedText(b);
+    const hit = nameVecCache.get(text);
+    if (hit) out.push({ id: b.id, vec: hit, kind: 'name' }); else needName.push({ b, text });
+  }
+  if (needName.length) {
+    try {
+      const vecs = await embedTexts(needName.map((x) => x.text), auth, 'RETRIEVAL_DOCUMENT');
+      needName.forEach((x, i) => { nameVecCache.set(x.text, vecs[i]); out.push({ id: x.b.id, vec: vecs[i], kind: 'name' }); });
+    } catch { /* best effort: centroids only */ }
+  }
+  return out;
+}
+
+/**
+ * If the AI left the post in Misc (but the post isn't simply closed) or was unsure, see whether its
+ * embedding clearly belongs to one of the existing boards. One embedding request, no extra analysis.
+ */
+async function embeddingFallback(choice: BoardChoice, boards: AiBoard[], post: Parameters<typeof embedText>[0], auth: Awaited<ReturnType<typeof getGeminiAuth>>, vec?: number[] | null): Promise<BoardChoice> {
+  const unsure = choice.kind === 'misc' ? choice.reason !== 'forced' : choice.kind === 'existing' && choice.confidence < LOW_CONFIDENCE;
+  if (!unsure || Date.now() < embedPausedUntil) return choice;
+  try {
+    let v = vec ?? null;
+    if (!v) {
+      const text = embedText({ ...post, board: null });
+      if (!text) return choice;
+      [v] = await embedTexts([text], auth, 'RETRIEVAL_DOCUMENT');
+    }
+    const cands = await boardVectors(boards, auth);
+    const pick = pickBoardByEmbedding(v, cands);
+    if (pick && !(choice.kind === 'existing' && choice.id === pick.id)) return { kind: 'existing', id: pick.id, confidence: Math.max(choice.confidence, 0.5) };
+  } catch (e: any) {
+    if (e instanceof EmbedError && e.status === 429) embedPausedUntil = Date.now() + 10 * 60_000;
+  }
+  return choice;
+}
+
+let lastTranslateTry = 0;
+
+/** One-off: give the user's/AI boards created before 1.10.0 names in RU/EN/UK (one AI request). */
+export async function translateLegacyBoards(): Promise<number> {
+  if (Date.now() - lastTranslateTry < 30 * 60_000 || !getSettings().aiEnabled) return 0;
+  const todo = await db.boardsNeedingTranslation(40);
+  if (!todo.length) return 0;
+  const auth = await getGeminiAuth();
+  if (!canUseGemini(auth)) return 0;
+  lastTranslateTry = Date.now(); // at most one batch every 30 min
+  try {
+    const tr = await translateBoardNames(todo, auth);
+    for (const b of todo) await db.setBoardTranslations(b.id, tr.get(b.id) ?? null);
+    return tr.size;
+  } catch {
+    return 0; // limit / offline: try again on the next start
+  }
+}
+
+export interface ResortProgress { done: number; total: number; moved: number }
+export interface ResortResult { moved: number; checked: number; left: number; waiting: number; limited: 'device' | 'global' | null }
+
+/** Max AI requests per «Разобрать Misc» tap: keeps well inside the proxy's per-minute and daily limits. */
+export const RESORT_AI_BATCH = 15;
+
+/**
+ * «Разобрать Misc»: first a free pass by embeddings, then up to RESORT_AI_BATCH posts through the AI.
+ * Closed posts without content stay (they're re-sorted automatically once they get a note/screenshot/IG login).
+ * Only the board changes; title/summary/tags are kept.
+ */
+export async function resortMisc(onProgress?: (p: ResortProgress) => void): Promise<ResortResult> {
+  await loadSettings();
+  const auth = await getGeminiAuth();
+  const posts = await db.miscPosts();
+  const waiting = posts.filter((p) => p.needsResort).length;
+  const todo = posts.filter((p) => !p.needsResort);
+  const res: ResortResult = { moved: 0, checked: 0, left: 0, waiting, limited: null };
+  if (!todo.length || !canUseGemini(auth)) { res.left = todo.length; return res; }
+  const total = todo.length;
+  const report = () => onProgress?.({ done: res.checked, total, moved: res.moved });
+  report();
+  let boards = await db.aiBoards();
+  // 1) embeddings (already computed for most posts)
+  const cands = await boardVectors(boards, auth);
+  const rest: db.Post[] = [];
+  for (const p of todo) {
+    const pick = p.embedding?.length ? pickBoardByEmbedding(p.embedding, cands) : null;
+    if (pick) { await db.updatePost(p.id, { board_id: pick.id }); await db.clearEmbedding(p.id); res.moved++; res.checked++; report(); }
+    else rest.push(p);
+  }
+  // 2) AI, in a small batch
+  let used = 0;
+  for (const p of rest) {
+    if (used >= RESORT_AI_BATCH) break;
+    used++;
+    await idle();
+    try {
+      const meta: Metadata = { url: p.url, platform: p.platform, title: p.title ?? undefined, description: p.description ?? undefined, author: p.author ?? undefined, blocked: p.metaBlocked, unavailable: p.unavailable, source: 'db' };
+      const ai = await analyzePost({ meta, sharedText: p.rawText ?? undefined, note: p.note ?? undefined, boards, lang: getSettings().aiLang, boardLang: getLang() }, auth);
+      let choice = ai.choice ?? { kind: 'misc', confidence: 0, reason: 'ai' } as BoardChoice;
+      choice = await embeddingFallback(choice, boards, p, auth, p.embedding);
+      if (choice.kind !== 'misc') {
+        const id = await db.boardForChoice(choice, ai.boardEmoji);
+        const cur = await db.getPost(p.id);
+        if (cur && cur.boardId === p.boardId) { await db.updatePost(p.id, { board_id: id }); await db.clearEmbedding(p.id); res.moved++; }
+        if (choice.kind === 'new') boards = await db.aiBoards();
+      }
+    } catch (e: any) {
+      if (e instanceof AiError && e.limit) { res.limited = e.limit.scope; break; }
+      if (e instanceof AiError && !e.retryable) break;
+    }
+    res.checked++;
+    report();
+    await new Promise((r) => setTimeout(r, 1200)); // stay under the proxy's per-minute limit
+  }
+  res.left = Math.max(0, total - res.checked);
+  backfillEmbeddings().catch(() => {});
+  return res;
 }

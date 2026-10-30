@@ -16,6 +16,10 @@ export const RESPONSE_SCHEMA = {
   properties: {
     title: { type: 'STRING' }, summary: { type: 'STRING' },
     tags: { type: 'ARRAY', items: { type: 'STRING' } }, board: { type: 'STRING' }, boardEmoji: { type: 'STRING' },
+    // 1.10.0: strict board choice by id, confident new boards in 3 languages, one-off board-name translation
+    boardId: { type: 'STRING' }, confidence: { type: 'NUMBER' },
+    newBoard: { type: 'OBJECT', properties: { ru: { type: 'STRING' }, en: { type: 'STRING' }, uk: { type: 'STRING' } }, required: ['ru', 'en', 'uk'] },
+    boardNames: { type: 'ARRAY', items: { type: 'OBJECT', properties: { id: { type: 'INTEGER' }, ru: { type: 'STRING' }, en: { type: 'STRING' }, uk: { type: 'STRING' } }, required: ['id', 'ru', 'en', 'uk'] } },
   },
   required: ['title', 'summary', 'tags', 'board'],
 };

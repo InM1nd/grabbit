@@ -18,7 +18,9 @@ export interface Metadata {
 export interface AiResult {
   summary: string;
   tags: string[];
+  /** Display name of the chosen board (for logs/UI; the decision is in `choice`). */
   board: string;
+  choice?: import('./sorting').BoardChoice;
   boardEmoji?: string;
   title?: string;
   model: string;

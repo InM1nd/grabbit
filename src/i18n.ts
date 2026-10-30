@@ -7,6 +7,18 @@ let lang: Lang = 'ru';
 
 // [ru (key), en, uk]
 const T: [string, string, string][] = [
+  ['Разобрать Misc', 'Sort Misc', 'Розібрати Misc'],
+  ['Разбираю Misc…', 'Sorting Misc…', 'Розбираю Misc…'],
+  ['Разобрать', 'Sort', 'Розібрати'],
+  ['Проверено {done} из {total} · перенесено {moved}', 'Checked {done} of {total} · moved {moved}', 'Перевірено {done} з {total} · перенесено {moved}'],
+  ['ИИ попробует разложить посты по подходящим доскам', 'AI will try to move posts to matching boards', 'ШІ спробує розкласти дописи по відповідних дошках'],
+  ['Здесь только закрытые посты', 'Only closed posts here', 'Тут лише закриті дописи'],
+  ['Закрытых постов: {n} — добавь скриншот или заметку, и они разложатся сами', 'Closed posts: {n} — add a screenshot or a note and they will sort themselves', 'Закритих дописів: {n} — додай скриншот або нотатку, і вони розкладуться самі'],
+  ['Не удалось разобрать — попробуй позже', 'Could not sort — try again later', 'Не вдалося розібрати — спробуй пізніше'],
+  ['Разложил по доскам: {n}', 'Moved to boards: {n}', 'Розклав по дошках: {n}'],
+  ['Новых мест не нашлось', 'No better boards found', 'Кращих дошок не знайшлося'],
+  ['лимит ИИ на сегодня — продолжу завтра', 'AI limit for today — continue tomorrow', 'ліміт ШІ на сьогодні — продовжу завтра'],
+  ['ещё {n} — нажми снова', '{n} more — tap again', 'ще {n} — натисни знову'],
   ['Закрыть окно', 'Close window', 'Закрити вікно'],
   ['Закрыть', 'Close', 'Закрити'],
   ['Без доски', 'No board', 'Без дошки'],
