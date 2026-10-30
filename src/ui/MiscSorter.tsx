@@ -7,7 +7,7 @@ import { useColors } from '../theme';
 import { t } from '../i18n';
 
 /** In-feed card on the Misc board: «Разобрать Misc» with inline progress (no system dialogs). */
-export function MiscSorter({ posts, onDone }: { posts: Post[]; onDone: (msg: string) => void }) {
+export function MiscSorter({ posts, onDone }: { posts: Post[]; onDone: (msg: string, r?: ResortResult) => void }) {
   const c = useColors();
   const [prog, setProg] = useState<ResortProgress | null>(null);
   const running = useRef(false);
@@ -27,7 +27,7 @@ export function MiscSorter({ posts, onDone }: { posts: Post[]; onDone: (msg: str
     const parts = [r.moved ? t('Разложил по доскам: {n}', { n: r.moved }) : t('Новых мест не нашлось')];
     if (r.limited) parts.push(t('лимит ИИ на сегодня — продолжу завтра'));
     else if (r.left) parts.push(t('ещё {n} — нажми снова', { n: r.left }));
-    onDone(parts.join(' · '));
+    onDone(parts.join(' · '), r);
   };
 
   const pct = prog && prog.total ? Math.min(1, prog.done / prog.total) : 0;

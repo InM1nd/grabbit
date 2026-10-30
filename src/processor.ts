@@ -396,6 +396,24 @@ async function embeddingFallback(choice: BoardChoice, boards: AiBoard[], post: P
   return choice;
 }
 
+/**
+ * «Вернуть» after «Разобрать»: puts the moved posts back (only those the user hasn't moved again since)
+ * and removes boards the run created if they ended up empty. Returns how many posts went back.
+ */
+export async function undoResort(r: Pick<ResortResult, 'moves' | 'newBoards'>): Promise<number> {
+  let n = 0;
+  for (const m of r.moves) {
+    const cur = await db.getPost(m.postId);
+    if (cur && cur.boardId === m.to) { await db.updatePost(m.postId, { board_id: m.from }); await db.clearEmbedding(m.postId); n++; }
+  }
+  if (r.newBoards.length) {
+    const empty = new Set((await db.listBoards()).filter((b) => b.count === 0).map((b) => b.id));
+    for (const id of r.newBoards) if (empty.has(id)) await db.deleteBoard(id);
+  }
+  backfillEmbeddings().catch(() => {});
+  return n;
+}
+
 let lastTranslateTry = 0;
 
 /** One-off: give the user's/AI boards created before 1.10.0 names in RU/EN/UK (one AI request). */
@@ -416,7 +434,12 @@ export async function translateLegacyBoards(): Promise<number> {
 }
 
 export interface ResortProgress { done: number; total: number; moved: number }
-export interface ResortResult { moved: number; checked: number; left: number; waiting: number; limited: 'device' | 'global' | null }
+export interface ResortMove { postId: number; from: number | null; to: number }
+export interface ResortResult {
+  moved: number; checked: number; left: number; waiting: number; limited: 'device' | 'global' | null;
+  /** What «Вернуть» needs: every move, and boards this run created. */
+  moves: ResortMove[]; newBoards: number[];
+}
 
 /** Max AI requests per «Разобрать Misc» tap: keeps well inside the proxy's per-minute and daily limits. */
 export const RESORT_AI_BATCH = 15;
@@ -432,7 +455,7 @@ export async function resortMisc(onProgress?: (p: ResortProgress) => void): Prom
   const posts = await db.miscPosts();
   const waiting = posts.filter((p) => p.needsResort).length;
   const todo = posts.filter((p) => !p.needsResort);
-  const res: ResortResult = { moved: 0, checked: 0, left: 0, waiting, limited: null };
+  const res: ResortResult = { moved: 0, checked: 0, left: 0, waiting, limited: null, moves: [], newBoards: [] };
   if (!todo.length || !canUseGemini(auth)) { res.left = todo.length; return res; }
   const total = todo.length;
   const report = () => onProgress?.({ done: res.checked, total, moved: res.moved });
@@ -443,7 +466,7 @@ export async function resortMisc(onProgress?: (p: ResortProgress) => void): Prom
   const rest: db.Post[] = [];
   for (const p of todo) {
     const pick = p.embedding?.length ? pickBoard(p.embedding, prep) : null;
-    if (pick) { await db.updatePost(p.id, { board_id: pick.id }); await db.clearEmbedding(p.id); res.moved++; res.checked++; report(); }
+    if (pick) { await db.updatePost(p.id, { board_id: pick.id }); await db.clearEmbedding(p.id); res.moves.push({ postId: p.id, from: p.boardId, to: pick.id }); res.moved++; res.checked++; report(); }
     else rest.push(p);
   }
   // 2) AI, in a small batch
@@ -464,7 +487,8 @@ export async function resortMisc(onProgress?: (p: ResortProgress) => void): Prom
       if (choice.kind !== 'misc') {
         const id = await db.boardForChoice(choice, ai.boardEmoji);
         const cur = await db.getPost(p.id);
-        if (cur && cur.boardId === p.boardId) { await db.updatePost(p.id, { board_id: id }); await db.clearEmbedding(p.id); res.moved++; }
+        if (cur && cur.boardId === p.boardId) { await db.updatePost(p.id, { board_id: id }); await db.clearEmbedding(p.id); res.moves.push({ postId: p.id, from: p.boardId, to: id }); res.moved++; }
+        if (!boards.some((b) => b.id === id)) res.newBoards.push(id);
         if (choice.kind === 'new') boards = await db.aiBoards();
       }
     } catch (e: any) {

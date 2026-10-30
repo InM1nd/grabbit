@@ -15,7 +15,7 @@ import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-cont
 import { extractUrl } from './src/core/url';
 import * as db from './src/db';
 import { onDataChanged } from './src/events';
-import { attachScreenshot, deleteThumb, latestClosedPost, processQueue, reprocessInstagramUnavailable, retryAllNow, saveScreenshot, saveShared, semanticSearch } from './src/processor';
+import { attachScreenshot, deleteThumb, latestClosedPost, processQueue, reprocessInstagramUnavailable, retryAllNow, saveScreenshot, saveShared, semanticSearch, undoResort, type ResortResult } from './src/processor';
 import { ensurePermission, rescheduleReminder, setupNotifications } from './src/reminders';
 import { updateSettings, useSettings } from './src/settings';
 import { DARK, LIGHT, ThemeContext, useColors } from './src/theme';
@@ -218,6 +218,18 @@ function Main() {
     }, 4200);
   }, [showToast, toastA]);
 
+  /** «Разобрать» finished: say what moved and offer «Вернуть» while the toast is up. */
+  const onResorted = useCallback((msg: string, r?: ResortResult) => {
+    reload();
+    if (!r?.moves.length) return showToast({ msg }, 3500);
+    showToast({ msg, action: { label: t('Вернуть'), onPress: async () => {
+      toastA.setValue(0); setToastState(null);
+      const n = await undoResort(r);
+      toast(t('Вернул в «Разное»: {n}', { n }));
+      reload();
+    } } }, 8000);
+  }, [showToast, toastA, toast, reload]);
+
   // ---------- android back ----------
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -301,7 +313,7 @@ function Main() {
           <FeedScreen posts={visiblePosts} query={debQuery} semantic={semActive}
             filter={filter} onOpenFilters={() => setFiltersOpen(true)} onLongPress={setMarkPost}
             onOpen={openPost} onSwipeDelete={swipeDelete}
-            extraHeader={currentBoard?.key === 'misc' && !debQuery ? <MiscSorter posts={visiblePosts} onDone={(m) => { showToast({ msg: m }, 3500); reload(); }} /> : null}
+            extraHeader={currentBoard?.key === 'misc' && !debQuery ? <MiscSorter posts={visiblePosts} onDone={onResorted} /> : null}
             onRefresh={async () => { setRefreshing(true); await retryAllNow(); await reload(); setRefreshing(false); }} refreshing={refreshing} />
         ) : (
           <BoardsScreen boards={boards} unsortedCount={unsorted} onOpenBoard={(id) => { setBoardId(id); setTab('feed'); }} />

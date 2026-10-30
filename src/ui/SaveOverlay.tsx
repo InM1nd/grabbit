@@ -53,7 +53,7 @@ export function SaveOverlay({ state, delaySec, onDone, onOpen }: Props) {
         <Text style={[styles.text, { color: c.text }]} numberOfLines={1}>
           {text}{label ? ` → ${label}` : ''}
         </Text>
-        {state.kind !== 'no-url' && pending && !label && <ActivityIndicator size="small" color={c.bg} style={{ marginLeft: 6 }} />}
+        {state.kind !== 'no-url' && pending && !label && <ActivityIndicator size="small" color={c.sub} style={{ marginLeft: 6 }} />}
         {state.kind !== 'no-url' && (
           <Pressable onPress={() => onOpen(state.id)} hitSlop={10} style={{ marginLeft: 'auto', paddingLeft: 12 }}>
             <Text style={[styles.link, { color: c.text }]}>{t('Изменить')}</Text>

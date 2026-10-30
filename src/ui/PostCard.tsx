@@ -46,10 +46,12 @@ function PostCardImpl({ post, width, onPress, onSwipeDelete, onLongPress }: Prop
     onPanResponderTerminate: () => Animated.spring(x, { toValue: 0, useNativeDriver: true }).start(),
   })).current;
   const fade = x.interpolate({ inputRange: [-width, 0], outputRange: [0.3, 1], extrapolate: 'clamp' });
+  // Text-only cards have a see-through tint, so the trash only appears while swiping.
+  const trashOpacity = x.interpolate({ inputRange: [-40, -8], outputRange: [1, 0], extrapolate: 'clamp' });
 
   return (
     <View style={{ marginBottom: 14 }}>
-      <View style={[StyleSheet.absoluteFill, styles.trash]}><Ionicons name="trash-outline" size={22} color={c.danger} /></View>
+      <Animated.View style={[StyleSheet.absoluteFill, styles.trash, { opacity: trashOpacity }]}><Ionicons name="trash-outline" size={22} color={c.danger} /></Animated.View>
       <Animated.View {...pan.panHandlers} style={{ transform: [{ translateX: x }], opacity: fade }}>
         <Pressable onPress={() => onPress(post)} onLongPress={onLongPress ? () => onLongPress(post) : undefined} delayLongPress={350} style={({ pressed }) => ({ width, opacity: pressed ? 0.8 : 1 })}>
           {img ? (
