@@ -23,13 +23,13 @@ function Panel({ title, full, children, footer, onClose, closeDisabled = false, 
     void AccessibilityInfo.isReduceMotionEnabled().then(value => {
       if (!alive) return;
       setReduce(value);
-      entry = Animated.timing(progress, { toValue: 1, duration: value ? 0 : 240, easing: Easing.out(Easing.cubic), useNativeDriver: true });
+      entry = Animated.timing(progress, { toValue: 1, duration: value ? 0 : 240, easing: Easing.out(Easing.cubic), useNativeDriver: true, isInteraction: false });
       entry.start();
     });
     const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduce);
     return () => { alive = false; subscription.remove(); entry?.stop(); };
   }, [progress]);
-  const close = () => { if (closeDisabled) return; Animated.timing(progress, { toValue: 0, duration: reduce ? 0 : 160, easing: Easing.in(Easing.cubic), useNativeDriver: true }).start(({ finished }) => { if (finished) onClose(); }); };
+  const close = () => { if (closeDisabled) return; Animated.timing(progress, { toValue: 0, duration: reduce ? 0 : 160, easing: Easing.in(Easing.cubic), useNativeDriver: true, isInteraction: false }).start(({ finished }) => { if (finished) onClose(); }); };
   return <Modal transparent visible animationType="none" onRequestClose={close}>
     <KeyboardAvoidingView behavior={Platform.OS === 'android' ? 'height' : 'padding'} style={styles.overlay}>
       <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: c.overlay, opacity: progress }]}><Pressable accessibilityLabel={t('Закрыть окно')} accessibilityRole="button" onPress={close} style={StyleSheet.absoluteFill} /></Animated.View>
@@ -66,7 +66,7 @@ export function PostPanel({ post, boards, onUpdate, onDelete, onClose, onMenu, o
   const [pickingBoard, setPickingBoard] = useState(false);
   const chevron = useRef(new Animated.Value(0)).current;
   const reduceMotion = useReduceMotion();
-  useEffect(() => { Animated.spring(chevron, { toValue: pickingBoard ? 1 : 0, useNativeDriver: true, speed: reduceMotion ? 100 : 20, bounciness: 6 }).start(); }, [pickingBoard]);
+  useEffect(() => { Animated.spring(chevron, { toValue: pickingBoard ? 1 : 0, useNativeDriver: true, isInteraction: false, speed: reduceMotion ? 100 : 20, bounciness: 6 }).start(); }, [pickingBoard]);
   const [copyMessage, setCopyMessage] = useState('');
   const [showOriginal, setShowOriginal] = useState(false);
   const board = boards.find(b => b.id === post.boardId);

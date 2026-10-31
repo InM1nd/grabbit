@@ -51,7 +51,7 @@ export function FilterSheet({ visible, filter, posts, boards, onApply, onClose }
     setDraft(filter);
     if (reduce) { y.setValue(0); return; }
     y.setValue(600);
-    Animated.spring(y, { toValue: 0, useNativeDriver: true, bounciness: 3, speed: 18 }).start();
+    Animated.spring(y, { toValue: 0, useNativeDriver: true, isInteraction: false, bounciness: 3, speed: 18 }).start();
   }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps
   const sources = useMemo(() => presentSources(posts), [posts]);
   const count = useMemo(() => applyFilter(posts, draft, true).length, [posts, draft]);

@@ -27,7 +27,7 @@ export function SaveOverlay({ state, delaySec, onDone, onOpen }: Props) {
     setLabel(null); setPending(state.kind === 'saved');
     haptic(state.kind === 'no-url' ? 'reject' : 'confirm');
     y.setValue(120);
-    Animated.spring(y, { toValue: 0, useNativeDriver: true, bounciness: 5 }).start();
+    Animated.spring(y, { toValue: 0, useNativeDriver: true, isInteraction: false, bounciness: 5 }).start();
     const ms = state.kind === 'no-url' ? 2500 : delaySec < 0 ? 2600 : Math.max(700, delaySec * 1000);
     const t = setTimeout(() => doneRef.current(), ms);
     if (state.kind === 'no-url') return () => clearTimeout(t);

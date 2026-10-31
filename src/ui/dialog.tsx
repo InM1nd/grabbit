@@ -52,7 +52,7 @@ function Sheet({ state, onClose }: { state: State; onClose: (i: number | null) =
   const y = useRef(new Animated.Value(300)).current;
   const [shown, setShown] = useState<State>(null);
   useEffect(() => {
-    if (state) { setShown(state); y.setValue(300); Animated.spring(y, { toValue: 0, useNativeDriver: true, bounciness: 3, speed: 18 }).start(); }
+    if (state) { setShown(state); y.setValue(300); Animated.spring(y, { toValue: 0, useNativeDriver: true, isInteraction: false, bounciness: 3, speed: 18 }).start(); }
   }, [state, y]);
   const s = state || shown;
   if (!s) return null;

@@ -24,7 +24,7 @@ export function BottomNav({ tab, onChange, onAdd, bottomInset = 0 }: Props) {
       toValue: tab === 'feed' ? 0 : 1,
       duration: reduceMotion ? 0 : 240,
       easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
+      useNativeDriver: true, isInteraction: false,
     });
     animation.start();
     return () => animation.stop();

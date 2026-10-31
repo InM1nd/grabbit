@@ -14,6 +14,7 @@ import { EmbedError, embedText, embedTexts, packVec, rankByVector } from './core
 
 import { aiMode, getGeminiAuth } from './aiAuth';
 import { canUseGemini } from './core/gemini';
+import { idleWithin } from './core/idle';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 
 /**
@@ -86,7 +87,7 @@ export function deleteThumb(id: number) {
 let running: Promise<void> | null = null;
 
 /** Yield to the UI: wait until animations/gestures settle so background work never competes with a scroll. */
-const idle = () => new Promise<void>((r) => { try { require('react-native').InteractionManager.runAfterInteractions(() => setTimeout(r, 16)); } catch { r(); } });
+const idle = () => idleWithin((cb) => require('react-native').InteractionManager.runAfterInteractions(cb));
 
 /** Process every pending post (metadata → thumbnail → Gemini). Safe to call often. */
 export function processQueue(onlyId?: number): Promise<void> {

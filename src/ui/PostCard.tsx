@@ -40,10 +40,10 @@ function PostCardImpl({ post, width, onPress, onSwipeDelete, onLongPress }: Prop
     onPanResponderMove: (_, g) => x.setValue(Math.min(0, g.dx)),
     onPanResponderRelease: (_, g) => {
       if (g.dx < -latest.current.width * 0.4 || g.vx < -1.2) {
-        Animated.timing(x, { toValue: -latest.current.width * 1.3, duration: 160, useNativeDriver: true }).start(() => { latest.current.onSwipeDelete?.(latest.current.post); x.setValue(0); });
-      } else Animated.spring(x, { toValue: 0, useNativeDriver: true }).start();
+        Animated.timing(x, { toValue: -latest.current.width * 1.3, duration: 160, useNativeDriver: true, isInteraction: false }).start(() => { latest.current.onSwipeDelete?.(latest.current.post); x.setValue(0); });
+      } else Animated.spring(x, { toValue: 0, useNativeDriver: true, isInteraction: false }).start();
     },
-    onPanResponderTerminate: () => Animated.spring(x, { toValue: 0, useNativeDriver: true }).start(),
+    onPanResponderTerminate: () => Animated.spring(x, { toValue: 0, useNativeDriver: true, isInteraction: false }).start(),
   })).current;
   const fade = x.interpolate({ inputRange: [-Math.max(width, 1), 0], outputRange: [0.3, 1], extrapolate: 'clamp' });
   // Text-only cards have a see-through tint, so the trash only appears while swiping.

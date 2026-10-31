@@ -42,7 +42,7 @@ const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 export function PressScale({ style, scaleTo = 0.95, onPressIn, onPressOut, ...rest }: Omit<PressableProps, 'style'> & { style?: StyleProp<ViewStyle>; scaleTo?: number }) {
   const scale = useRef(new Animated.Value(1)).current;
   const reduce = useReduceMotion();
-  const to = (v: number) => Animated.spring(scale, { toValue: v, useNativeDriver: true, speed: 40, bounciness: v === 1 ? 10 : 0 }).start();
+  const to = (v: number) => Animated.spring(scale, { toValue: v, useNativeDriver: true, isInteraction: false, speed: 40, bounciness: v === 1 ? 10 : 0 }).start();
   return <AnimatedPressable {...rest} style={[style, { transform: [{ scale }] }]}
     onPressIn={(e) => { if (!reduce) to(scaleTo); onPressIn?.(e); }}
     onPressOut={(e) => { to(1); onPressOut?.(e); }} />;
@@ -57,7 +57,7 @@ export function PopIcon({ active, ...icon }: React.ComponentProps<typeof Ionicon
     if (first.current) { first.current = false; return; }
     if (!active || reduce) return;
     scale.setValue(0.6);
-    Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 14, bounciness: 16 }).start();
+    Animated.spring(scale, { toValue: 1, useNativeDriver: true, isInteraction: false, speed: 14, bounciness: 16 }).start();
   }, [active]);
   return <Animated.View style={{ transform: [{ scale }] }}><Ionicons {...icon} /></Animated.View>;
 }
@@ -66,7 +66,7 @@ export function PopIcon({ active, ...icon }: React.ComponentProps<typeof Ionicon
 export function Appear({ children, style, delay = 0, dy = 8 }: { children: React.ReactNode; style?: StyleProp<ViewStyle>; delay?: number; dy?: number }) {
   const p = useRef(new Animated.Value(0)).current;
   const reduce = useReduceMotion();
-  useEffect(() => { Animated.timing(p, { toValue: 1, duration: reduce ? 0 : 220, delay: reduce ? 0 : delay, useNativeDriver: true }).start(); }, []);
+  useEffect(() => { Animated.timing(p, { toValue: 1, duration: reduce ? 0 : 220, delay: reduce ? 0 : delay, useNativeDriver: true, isInteraction: false }).start(); }, []);
   return <Animated.View style={[style, { opacity: p, transform: [{ translateY: p.interpolate({ inputRange: [0, 1], outputRange: [dy, 0] }) }] }]}>{children}</Animated.View>;
 }
 
