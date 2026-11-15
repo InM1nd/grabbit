@@ -5,14 +5,16 @@ import { activeCount, type FeedFilter } from '../core/filters';
 import { FilterButton } from './FilterSheet';
 import { useColors } from '../theme';
 import { Masonry } from './Masonry';
+import type { CardAction } from './PostCard';
 import { t } from '../i18n';
 
 interface Props {
   posts: Post[];
+  action?: CardAction;
   query: string;
   semantic?: boolean;
   filter: FeedFilter;
-  onOpenFilters: () => void;
+  onOpenFilters?: () => void;
   onLongPress?: (p: Post) => void;
   onOpen: (p: Post) => void;
   onSwipeDelete: (p: Post) => void;
@@ -22,13 +24,13 @@ interface Props {
   extraHeader?: React.ReactNode;
 }
 
-export function FeedScreen({ posts, query, semantic, filter, onOpenFilters, onLongPress, onOpen, onSwipeDelete, onRefresh, refreshing, extraHeader }: Props) {
+export function FeedScreen({ posts, query, semantic, filter, onOpenFilters, onLongPress, onOpen, onSwipeDelete, onRefresh, refreshing, extraHeader, action }: Props) {
   const c = useColors();
   const header = (
     <>
     <View style={styles.bar}>
       <Text style={[styles.count, { color: c.sub }]}>{t('Постов: {n}', { n: posts.length })}</Text>
-      <FilterButton filter={filter} onPress={onOpenFilters} />
+      {onOpenFilters && <FilterButton filter={filter} onPress={onOpenFilters} />}
     </View>
     {extraHeader}
     {!!query && semantic && <Text style={[styles.hint, { color: c.sub }]}>{t('✨ Поиск по смыслу — самые близкие сверху')}</Text>}
@@ -36,7 +38,9 @@ export function FeedScreen({ posts, query, semantic, filter, onOpenFilters, onLo
   );
   const empty = (
     <View style={styles.empty}>
-      {!query && activeCount(filter) > 0 ? (
+      {!onOpenFilters ? (
+        <Text style={[styles.emptyTitle, { color: c.text }]}>{t('Здесь пока ничего')}</Text>
+      ) : !query && activeCount(filter) > 0 ? (
         <>
           <Text style={[styles.emptyTitle, { color: c.text }]}>{t('Здесь пока ничего')}</Text>
           <Text style={[styles.emptyText, { color: c.sub }]}>{t('Долгое нажатие на карточку — отметить «Попробовать», «Сделано» или «Неважно».')}</Text>
@@ -56,7 +60,7 @@ export function FeedScreen({ posts, query, semantic, filter, onOpenFilters, onLo
       )}
     </View>
   );
-  return <Masonry posts={posts} onPress={onOpen} onSwipeDelete={onSwipeDelete} onLongPress={onLongPress} header={header} empty={empty} refreshing={refreshing} onRefresh={onRefresh} />;
+  return <Masonry action={action} posts={posts} onPress={onOpen} onSwipeDelete={onSwipeDelete} onLongPress={onLongPress} header={header} empty={empty} refreshing={refreshing} onRefresh={onRefresh} />;
 }
 
 const styles = StyleSheet.create({

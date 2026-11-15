@@ -7,10 +7,17 @@ import type { Post } from './src/db';
 import { applyFilter, DEFAULT_FILTER, type FeedFilter } from './src/core/filters';
 import { FilterSheet } from './src/ui/FilterSheet';
 import { DARK, LIGHT, ThemeContext } from './src/theme';
+import { MiscSorter } from './src/ui/MiscSorter';
+import { BoardFeed } from './src/ui/BoardFeed';
 import { FeedScreen } from './src/ui/FeedScreen';
 import { BottomNav } from './src/ui/BottomNav';
 import { AddPostPanel, PostPanel } from './src/ui/PostExperience';
 import { detectPlatform } from './src/core/url';
+import { postsInBoard, type BoardView } from './src/core/boardView';
+import { BoardInbox } from './src/ui/BoardInbox';
+import { InboxBoardPicker } from './src/ui/InboxBoardPicker';
+import { PostReminderControl } from './src/ui/PostReminderControl';
+import { t } from './src/i18n';
 import { previewBoards, previewPosts } from './src/preview/data';
 
 // Browser-only design playground. Native builds continue to use App.tsx.
@@ -20,25 +27,40 @@ function Preview() {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<FeedFilter>(DEFAULT_FILTER);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [inboxPicker, setInboxPicker] = useState<Post | null>(null);
+  const [reminders, setReminders] = useState<Record<number, number | null>>({});
   const [detail, setDetail] = useState<Post | null>(null);
+  const [sortResult, setSortResult] = useState<{ message: string; moves: { id: number; from: number | null; to: number }[] } | null>(null);
   const [deleted, setDeleted] = useState<Post | null>(null);
   const [tab, setTab] = useState<'feed' | 'boards'>('feed');
+  const [boardView, setBoardView] = useState<BoardView | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [adding, setAdding] = useState(false);
   const c = dark ? DARK : LIGHT;
   const boards = previewBoards.map(board => ({ ...board, count: posts.filter(p => p.boardId === board.id).length,
     covers: posts.filter(p => p.boardId === board.id && p.image).map(p => p.image!) }));
-  const reset = () => { setPosts(previewPosts); setDeleted(null); setFilter(DEFAULT_FILTER); setQuery(''); setTab('feed'); };
+  const currentBoard = boards.find(board => board.id === boardView);
+  const boardPosts = boardView == null ? [] : postsInBoard(posts, boardView);
+  const inbox = postsInBoard(posts, 'inbox');
+  const reset = () => { setPosts(previewPosts); setDeleted(null); setSortResult(null); setBoardView(null); setReminders({}); setFilter(DEFAULT_FILTER); setQuery(''); setTab('feed'); };
   const matched = posts.filter(p => `${p.title} ${p.summary} ${p.tags.join(' ')}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
   const visible = applyFilter(matched, filter);
+  const updatePost = (id: number, patch: Partial<Post>) => {
+    setPosts(prev => prev.map(post => post.id === id ? { ...post, ...patch } : post));
+    setDetail(prev => prev?.id === id ? { ...prev, ...patch } : prev);
+  };
   const remove = (post: Post) => { setPosts(prev => prev.filter(p => p.id !== post.id)); setDeleted(post); };
 
   return <SafeAreaProvider><ThemeContext.Provider value={c}>
     <View style={[s.app, { backgroundColor: c.bg }]}>
       <View style={[s.notice, { backgroundColor: c.accentSoft }]}><Text style={{ color: c.sub, fontSize: 11 }}>Дизайн-превью · тестовые посты</Text></View>
       <View style={s.header}>
-        <Image source={require('./assets/icon.png')} style={s.logo} accessibilityLabel="Зайчик Grabbit" />
-        <Text style={[s.wordmark, { color: c.text }]}>{tab === 'boards' ? 'Доски' : 'Grabbit'}</Text>
+        {boardView == null ? <Image source={require('./assets/icon.png')} style={s.logo} accessibilityLabel="Зайчик Grabbit" /> :
+          <Pressable accessibilityRole="button" accessibilityLabel={t('Назад к доскам')} onPress={() => setBoardView(null)} style={s.iconButton}>
+            <Ionicons name="chevron-back" size={24} color={c.text} />
+          </Pressable>}
+        <Text style={[s.wordmark, { color: c.text }]} numberOfLines={1}>{tab === 'feed' ? 'Grabbit' :
+          boardView === 'inbox' ? t('Входящие') : currentBoard?.name ?? 'Доски'}</Text>
         <Pressable accessibilityRole="button" accessibilityLabel="Настройки" onPress={() => setSettingsOpen(true)} style={s.iconButton}><Ionicons name="settings-outline" size={24} color={c.text} /></Pressable>
       </View>
       {tab === 'feed' && <View style={[s.search, { backgroundColor: c.card }]}>
@@ -48,10 +70,24 @@ function Preview() {
       <View style={{ flex: 1, minHeight: 0 }}>
       {tab === 'feed' ? <FeedScreen posts={visible} query={query}
         filter={filter} onOpenFilters={() => setFiltersOpen(true)} onOpen={setDetail} onSwipeDelete={remove}
-        onRefresh={() => { setPosts(previewPosts); setDeleted(null); }} refreshing={false} /> :
+        onRefresh={() => { setPosts(previewPosts); setDeleted(null); }} refreshing={false} /> : boardView != null ?
+        <BoardFeed key={boardView} posts={boardPosts} showOverview={boardView !== 'inbox' && currentBoard?.key !== 'misc'} onOpen={setDetail} onSwipeDelete={remove}
+          action={boardView === 'inbox' || currentBoard?.key === 'misc' ? { label: t('Выбрать доску'), icon: 'folder-open-outline', onPress: setInboxPicker } : undefined}
+          extraHeader={currentBoard?.key === 'misc' ? <MiscSorter posts={boardPosts} onSort={async (progress) => {
+            const candidates = boardPosts.filter(post => post.status !== 'pending');
+            const moves = candidates.flatMap(post => {
+              const related = posts.find(item => item.boardId != null && item.boardId !== currentBoard.id && item.tags.some(tag => post.tags.includes(tag)));
+              if (!related?.boardId) return [];
+              updatePost(post.id, { boardId: related.boardId });
+              return [{ postId: post.id, from: post.boardId, to: related.boardId }];
+            });
+            progress({ done: candidates.length, total: candidates.length, moved: moves.length });
+            return { moved: moves.length, checked: candidates.length, left: 0, waiting: 0, limited: null, moves, newBoards: [] };
+          }} onDone={(message, result) => setSortResult({ message, moves: (result?.moves ?? []).map(move => ({ id: move.postId, from: move.from, to: move.to })) })} /> : null}
+          onRefresh={() => {}} refreshing={false} /> :
         <ScrollView contentContainerStyle={s.boards}>
-          <Text style={[s.boardsIntro, { color: c.sub }]}>Всё сохранённое — по своим местам</Text>
-          <View style={s.boardGrid}>{boards.map(board => <Pressable key={board.id} accessibilityRole="button" accessibilityLabel={`Открыть доску ${board.name}`} onPress={() => { setFilter({ ...DEFAULT_FILTER, boards: [board.id] }); setQuery(''); setTab('feed'); }} style={({ pressed }) => [s.board, { opacity: pressed ? 0.8 : 1 }]}>
+          <BoardInbox count={inbox.length} onPress={() => setBoardView('inbox')} />
+          <View style={s.boardGrid}>{boards.map(board => <Pressable key={board.id} accessibilityRole="button" accessibilityLabel={`Открыть доску ${board.name}`} onPress={() => setBoardView(board.id)} style={({ pressed }) => [s.board, { opacity: pressed ? 0.8 : 1 }]}>
             <View style={[s.boardCover, { backgroundColor: c.card }]}>
               {board.covers[0] ? <Image source={{ uri: board.covers[0] }} contentFit="cover" style={StyleSheet.absoluteFill} /> : <Text style={{ fontSize: 40 }}>{board.emoji}</Text>}
               {board.covers[0] && <View style={[s.boardEmoji, { backgroundColor: c.bg }]}><Text style={{ fontSize: 20 }}>{board.emoji}</Text></View>}
@@ -62,8 +98,19 @@ function Preview() {
         </ScrollView>}
       </View>
       {deleted && <View style={[s.undo, { backgroundColor: c.text }]}><Text style={{ color: c.bg }}>Пост удалён</Text><Pressable accessibilityRole="button" onPress={() => { setPosts(prev => [...prev, deleted].sort((a, b) => a.id - b.id)); setDeleted(null); }}><Text style={{ color: dark ? '#F8483E' : '#FFACA5', fontWeight: '700' }}>Отменить</Text></Pressable></View>}
-      <FilterSheet visible={filtersOpen} filter={filter} posts={matched} boards={boards} onApply={(f) => { setFilter(f); setFiltersOpen(false); }} onClose={() => setFiltersOpen(false)} />
-      <BottomNav tab={tab} onChange={setTab} onAdd={() => setAdding(true)} />
+      {sortResult && <View style={[s.undo, { backgroundColor: c.text }]}><Text style={{ color: c.bg, flex: 1 }}>{sortResult.message}</Text>
+        <Pressable accessibilityRole="button" onPress={() => {
+          if (sortResult.moves.length) setPosts(previous => previous.map(post => {
+            const move = sortResult.moves.find(item => item.id === post.id && item.to === post.boardId);
+            return move ? { ...post, boardId: move.from } : post;
+          }));
+          setSortResult(null);
+        }}><Text style={{ color: c.bg, fontWeight: '700' }}>{sortResult.moves.length ? t('Вернуть') : t('Закрыть')}</Text></Pressable>
+      </View>}
+      <FilterSheet visible={filtersOpen} filter={filter} posts={matched} boards={boards} onApply={(f) => {
+          setFilter(f); setFiltersOpen(false);
+        }} onClose={() => setFiltersOpen(false)} />
+      <BottomNav tab={tab} onChange={(next) => { setBoardView(null); setTab(next); }} onAdd={() => setAdding(true)} />
       <Modal visible={settingsOpen} animationType="none" onRequestClose={() => setSettingsOpen(false)}>
         <View style={[s.app, { backgroundColor: c.bg, width: '100%', maxWidth: 430, alignSelf: 'center' }]}>
           <View style={s.settingsHeader}><Pressable accessibilityRole="button" accessibilityLabel="Назад из настроек" onPress={() => setSettingsOpen(false)} style={s.iconButton}><Ionicons name="chevron-back" size={26} color={c.text} /></Pressable><Text style={[s.settingsTitle, { color: c.text }]}>Настройки</Text></View>
@@ -81,16 +128,21 @@ function Preview() {
           </ScrollView>
         </View>
       </Modal>
-      {adding && <AddPostPanel preview boards={boards} posts={posts} onClose={() => setAdding(false)} onOpen={post => { setAdding(false); setDetail(post); }} onSave={input => {
+      {adding && <AddPostPanel preview boards={boards} posts={posts} initialBoardId={currentBoard?.id} onClose={() => setAdding(false)} onOpen={post => { setAdding(false); setDetail(post); }} onSave={input => {
         const post: Post = { ...previewPosts[0], id: Math.max(0, ...posts.map(p => p.id)) + 1,
           url: input.url, title: new URL(input.url).hostname, image: null, localImage: null,
           platform: detectPlatform(input.url), boardId: input.boardId, note: input.note || null,
           tags: [], mark: null, author: null, summary: null, description: null, createdAt: Date.now(), openedAt: null };
-        setPosts(prev => [post, ...prev]); setFilter(DEFAULT_FILTER); setQuery(''); setTab('feed');
+        setPosts(prev => [post, ...prev]);
         return post;
       }} />}
+      <InboxBoardPicker post={inboxPicker} boards={boards} onClose={() => setInboxPicker(null)}
+        onPick={(post, board) => updatePost(post.id, { boardId: board.id })} />
       {detail && <PostPanel key={detail.id} post={detail} boards={boards} onClose={() => setDetail(null)}
-        onUpdate={patch => { setPosts(prev => prev.map(p => p.id === detail.id ? { ...p, ...patch } : p)); setDetail(prev => prev ? { ...prev, ...patch } : null); }}
+        onUpdate={patch => updatePost(detail.id, patch)}
+        reminder={<PostReminderControl at={reminders[detail.id] ?? null}
+          onSave={at => { setReminders(previous => ({ ...previous, [detail.id]: at })); return true; }}
+          onCancel={() => { setReminders(previous => ({ ...previous, [detail.id]: null })); }} />}
         onDelete={() => { remove(detail); setDetail(null); }} />}
 
     </View>
@@ -98,7 +150,7 @@ function Preview() {
 }
 
 export default function App() {
-  if (window.location.search.includes('device=1') || window.innerWidth < 600) return <Preview />;
+  if (window.location.protocol === 'file:' || window.location.search.includes('device=1') || window.innerWidth < 600) return <Preview />;
   return <main style={{ width: '100%', height: '100dvh', overflow: 'auto', background: '#ECECEE', display: 'grid', placeItems: 'center', fontFamily: 'system-ui' }}>
     <div style={{ padding: '24px 0' }}>
       <iframe title="Мобильное превью Grabbit" src="/?device=1" style={{ width: 390, height: 'min(844px, calc(100dvh - 100px))', minHeight: 520, border: '8px solid #252526', borderRadius: 40, background: '#fff', boxShadow: '0 24px 70px #00000018' }} />
@@ -114,7 +166,7 @@ const s = StyleSheet.create({
   iconButton: { padding: 10, borderRadius: 24 }, search: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 16, paddingHorizontal: 14, borderRadius: 16, height: 46, marginBottom: 8, gap: 8 },
   input: { flex: 1, fontSize: 15, height: 44 },
   description: { fontSize: 15, lineHeight: 23, paddingHorizontal: 24, paddingBottom: 18 },
-  boards: { padding: 16, paddingBottom: 100 }, boardsIntro: { fontSize: 14, marginBottom: 20 }, boardGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 14 }, board: { width: '47.5%', marginBottom: 12 },
+  boards: { padding: 16, paddingBottom: 100 }, boardGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 14 }, board: { width: '47.5%', marginBottom: 12 },
   boardCover: { aspectRatio: 1, borderRadius: 20, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }, boardEmoji: { position: 'absolute', bottom: 10, left: 10, borderRadius: 12, padding: 6 }, boardName: { fontSize: 17, fontWeight: '600', marginTop: 10, marginBottom: 4 },
   settingsHeader: { flexDirection: 'row', alignItems: 'center', minHeight: 64, paddingHorizontal: 8 }, settingsTitle: { fontSize: 24, fontWeight: '700', marginLeft: 6 }, sectionTitle: { fontSize: 11, fontWeight: '600', letterSpacing: 1.2, marginTop: 20, marginBottom: 10 },
   settingsGroup: { borderRadius: 18, padding: 16 }, settingLabel: { fontSize: 16, fontWeight: '500', flex: 1 }, settingRow: { flexDirection: 'row', alignItems: 'center', gap: 12 }, themeOptions: { flexDirection: 'row', gap: 8, marginTop: 14 }, themeOption: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 12, borderRadius: 12 }, mobileSetting: { paddingVertical: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },

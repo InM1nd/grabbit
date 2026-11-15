@@ -1,8 +1,10 @@
 import NetInfo from '@react-native-community/netinfo';
 import { Directory, File, Paths } from 'expo-file-system';
-import { analyzePost, AiError, isWeakText, shouldSendImage, sniffMime, translateBoardNames } from './core/ai';
-import { boardEmbedText, centroid, EMBED_PICK, LOW_CONFIDENCE, pickBoard, pickBoardByEmbedding, prepareBoardVectors, type AiBoard, type BoardChoice, type BoardVector } from './core/sorting';
-import { fetchMetadata } from './core/metadata';
+import { analyzeDetailedText, analyzePost, AiError, isOpaque, isWeakText, shouldSendImage, sniffMime, translateBoardNames } from './core/ai';
+import { boardEmbedText, centroid, EMBED_PICK, LOW_CONFIDENCE, pickBoardByEmbedding, type AiBoard, type BoardChoice, type BoardVector } from './core/sorting';
+import { summarySources, type DetailSource } from './core/analysisSources';
+import { fetchArticleText, fetchMetadata } from './core/metadata';
+import { createPostQueue } from './core/postQueue';
 import type { Metadata } from './core/types';
 import { detectPlatform, extraText, extractUrl, normalizeUrl } from './core/url';
 import * as db from './db';
@@ -83,40 +85,59 @@ export function deleteThumb(id: number) {
   try { const f = new File(thumbsDir(), `${id}-shot.jpg`); if (f.exists) f.delete(); } catch {}
 }
 
-let running: Promise<void> | null = null;
+/** Let save feedback render before starting work. */
+const idle = () => new Promise<void>((resolve) => setTimeout(resolve, 16));
 
-/** Yield to the UI: wait until animations/gestures settle so background work never competes with a scroll. */
-const idle = () => new Promise<void>((r) => { try { require('react-native').InteractionManager.runAfterInteractions(() => setTimeout(r, 16)); } catch { r(); } });
-
-/** Process every pending post (metadata → thumbnail → Gemini). Safe to call often. */
-export function processQueue(onlyId?: number): Promise<void> {
-  if (running) return running.then(() => (onlyId ? processQueue(onlyId) : undefined));
-  running = (async () => {
-    try {
-      await loadSettings();
-      for (let round = 0; round < 3; round++) {
-        const list = await db.pendingPosts();
-        const todo = onlyId ? list.filter((p) => p.id === onlyId) : list;
-        if (!todo.length) break;
-        for (const p of todo) { await idle(); await processOne(p); }
-        if (onlyId) break;
-      }
+let maintenance: Promise<void> | null = null;
+const runPostQueue = createPostQueue(
+  (id) => db.nextPendingPost(Date.now(), id),
+  async (post) => { await idle(); await processOne(post); },
+  () => {
+    if (maintenance) return;
+    maintenance = (async () => {
       await idle();
       await backfillEmbeddings();
-      await translateLegacyBoards().catch(() => {});
-    } finally {
-      running = null;
-    }
-  })();
-  return running;
+      await translateLegacyBoards();
+    })().catch(() => {}).finally(() => { maintenance = null; });
+  },
+);
+
+/** Process a shared/retried post ahead of the backlog. Search indexing runs independently. */
+export async function processQueue(onlyId?: number): Promise<void> {
+  await loadSettings();
+  return runPostQueue(onlyId);
+}
+
+function savedMetadata(post: db.Post): Metadata {
+  return { url: post.url, platform: post.platform, title: post.title ?? undefined,
+    description: post.description ?? undefined, author: post.author ?? undefined, image: post.image ?? undefined,
+    blocked: post.metaBlocked, unavailable: post.unavailable, source: 'db' };
+}
+
+function needsInstagramSession(meta: Metadata) {
+  return meta.platform === 'instagram' && getSettings().igConnected && (meta.unavailable || meta.blocked || isWeakText(meta));
+}
+
+async function enrichInstagram(meta: Metadata): Promise<Metadata> {
+  try {
+    const ig = extractInstagram(await loadInstagramPage(meta.url));
+    if (ig && (ig.caption || ig.image)) return {
+      ...meta, blocked: false, unavailable: false, source: 'ig-session:' + ig.source,
+      description: ig.caption || meta.description, author: ig.author || meta.author,
+      title: meta.title || (ig.author ? [ig.authorName, '(' + ig.author + ')'].filter(Boolean).join(' ') + ' · Instagram' : undefined), image: ig.image || meta.image,
+    };
+  } catch {}
+  return meta;
+}
+
+function metadataFields(meta: Metadata) {
+  return { title: meta.title ?? null, description: meta.description ?? null, author: meta.author ?? null, image: meta.image ?? null,
+    meta_fetched: 1, meta_blocked: Number(!!meta.blocked), unavailable: Number(!!meta.unavailable) };
 }
 
 async function processOne(post: db.Post) {
   let p = post;
-  let meta: Metadata = {
-    url: p.url, platform: p.platform, title: p.title ?? undefined, description: p.description ?? undefined,
-    author: p.author ?? undefined, image: p.image ?? undefined, blocked: p.metaBlocked, unavailable: p.unavailable, source: 'db',
-  };
+  let meta = savedMetadata(p);
   if (!p.metaFetched) {
     let m = await fetchMetadata(p.url);
     // fetchMetadata never throws; if everything failed we may simply be offline → keep it for a retry,
@@ -126,42 +147,24 @@ async function processOne(post: db.Post) {
       return;
     }
     meta = { ...m, url: p.url };
-    // Private / login-only Instagram post → read it through the user's own session (hidden WebView).
-    const st = getSettings();
-    if (m.platform === 'instagram' && st.igConnected && (m.unavailable || m.blocked || isWeakText(m))) {
-      if (!igLoaderReady()) {
-        if (p.attempts < 3) { // app UI not mounted (e.g. background) → try again a bit later
-          await db.updatePost(p.id, { attempts: p.attempts + 1, next_try_at: Date.now() + 60_000, last_error: t('Жду Instagram-сессию') });
-          return;
-        }
-      } else {
-        try {
-          const raw = await loadInstagramPage(p.url);
-          const ig = extractInstagram(raw);
-          if (ig && (ig.caption || ig.image)) {
-            meta = {
-              ...meta, blocked: false, unavailable: false, source: 'ig-session:' + ig.source,
-              description: ig.caption || meta.description, author: ig.author || meta.author,
-              title: meta.title || (ig.author ? `${ig.authorName ? ig.authorName + ' ' : ''}(${ig.author}) · Instagram` : meta.title),
-              image: ig.image || meta.image,
-            };
-          }
-        } catch { /* fall back to whatever we have */ }
+    if (needsInstagramSession(meta)) {
+      if (igLoaderReady()) meta = await enrichInstagram(meta);
+      else if (p.attempts < 3) {
+        await db.updatePost(p.id, { attempts: p.attempts + 1, next_try_at: Date.now() + 60_000, last_error: t('Жду Instagram-сессию') });
+        return;
       }
     }
     m = meta;
-    const fields: Record<string, any> = {
-      title: m.title ?? null, description: m.description ?? null, author: m.author ?? null, image: m.image ?? null,
-      meta_fetched: 1, meta_blocked: m.blocked ? 1 : 0, unavailable: m.unavailable ? 1 : 0,
-    };
+    const fields: Record<string, any> = metadataFields(m);
     if (m.image && !p.shot) fields.local_image = await cacheThumb(p.id, m.image);
     p = { ...p, localImage: fields.local_image ?? p.localImage };
     await db.updatePost(p.id, fields);
   }
   const st = getSettings();
   if (!st.aiEnabled) {
-    const cur = await db.getPost(p.id);
-    await db.updatePost(p.id, { status: 'done', last_error: null, board_id: cur?.boardId ?? st.defaultBoardId ?? null });
+    const defaultBoardId = st.defaultBoardId != null && await db.boardExists(st.defaultBoardId) ? st.defaultBoardId : null;
+    await db.updatePost(p.id, { status: 'done', last_error: null },
+      p.boardId == null ? { from: null, to: defaultBoardId, needsResort: false } : undefined);
     return;
   }
   const auth = await getGeminiAuth();
@@ -179,22 +182,27 @@ async function processOne(post: db.Post) {
       image = await aiImage(p.localImage, p.shot ? 1080 : 768);
     }
     const ai = await analyzePost({ meta, sharedText, boards, image, note, lang: st.aiLang, boardLang: getLang() }, auth);
-    let choice: BoardChoice = ai.choice ?? { kind: 'misc', confidence: 0, reason: 'ai' };
-    choice = await embeddingFallback(choice, boards, { ...p, aiTitle: ai.title ?? null, summary: ai.summary, tags: ai.tags, description: meta.description ?? null, author: meta.author ?? null }, auth);
-    const defaultBoard = st.defaultBoardId != null && (await db.listBoards()).some((b) => b.id === st.defaultBoardId) ? st.defaultBoardId : null;
-    const boardId = defaultBoard ?? (await db.boardForChoice(choice, ai.boardEmoji));
-    const cur = await db.getPost(p.id);
-    if (!cur) return; // deleted meanwhile
-    const miscId = boards.find((b) => b.key === 'misc')?.id;
-    // Keep a board the user picked (manually or while we were working); only an auto-placement
-    // in Misc (or no board yet) is replaced by the new decision.
-    const replace = cur.boardId == null || (cur.boardId === p.boardId && (p.needsResort || cur.boardId === miscId));
+    const current = await db.getPost(p.id);
+    if (!current) return;
+    const miscId = boards.find((board) => board.key === 'misc')?.id;
+    const shouldPlace = current.boardId === p.boardId && (current.boardId == null || (current.needsResort && current.boardId === miscId));
+    let placement: { from: number | null; to: number; needsResort: boolean } | undefined;
+    if (shouldPlace) {
+      const defaultBoard = st.defaultBoardId != null && await db.boardExists(st.defaultBoardId) ? st.defaultBoardId : null;
+      let choice: BoardChoice = ai.choice ?? { kind: 'misc', confidence: 0, reason: 'ai' };
+      if (defaultBoard == null) {
+        choice = await embeddingFallback(choice, boards, { ...p, aiTitle: ai.title ?? null, summary: ai.summary, tags: ai.tags, description: meta.description ?? null, author: meta.author ?? null }, auth);
+      }
+      placement = {
+        from: current.boardId,
+        to: defaultBoard ?? await db.boardForChoice(choice, ai.boardEmoji),
+        needsResort: defaultBoard == null && choice.kind === 'misc' && choice.reason === 'forced',
+      };
+    }
     await db.updatePost(p.id, {
-      ai_title: ai.title ?? null, summary: ai.summary, tags: ai.tags,
-      board_id: replace ? boardId : cur.boardId,
-      needs_resort: choice.kind === 'misc' && choice.reason === 'forced' && !defaultBoard ? 1 : 0,
+      ai_title: ai.title ?? null, summary: ai.summary, tags: ai.tags, summary_sources: summarySources({ meta, sharedText, note, image, shot: p.shot }),
       status: 'done', last_error: null, attempts: p.attempts + 1,
-    });
+    }, placement);
     await db.clearEmbedding(p.id); // content changed → (re)embed in backfillEmbeddings()
   } catch (e: any) {
     if (e instanceof AiError && e.limit) {
@@ -404,7 +412,7 @@ export async function undoResort(r: Pick<ResortResult, 'moves' | 'newBoards'>): 
   let n = 0;
   for (const m of r.moves) {
     const cur = await db.getPost(m.postId);
-    if (cur && cur.boardId === m.to) { await db.updatePost(m.postId, { board_id: m.from }); await db.clearEmbedding(m.postId); n++; }
+    if (cur && await db.updatePost(m.postId, { board_id: m.from }, undefined, { boardId: m.to })) { await db.clearEmbedding(m.postId); n++; }
   }
   if (r.newBoards.length) {
     const empty = new Set((await db.listBoards()).filter((b) => b.count === 0).map((b) => b.id));
@@ -433,73 +441,108 @@ export async function translateLegacyBoards(): Promise<number> {
   }
 }
 
+export async function describePostInDepth(post: db.Post, transcript?: string): Promise<'saved' | 'no-source' | 'no-ai'> {
+  await loadSettings();
+  const auth = await getGeminiAuth();
+  if (!canUseGemini(auth)) return 'no-ai';
+  const supplied = transcript?.trim();
+  const source: DetailSource = supplied ? 'transcript' : 'article';
+  const text = supplied || (post.platform === 'web' && /^https?:/i.test(post.url) ? await fetchArticleText(post.url) : null);
+  if (!text || text.length < 40) return 'no-source';
+  const result = await analyzeDetailedText(text, source, auth, getSettings().aiLang);
+  const saved = await db.updatePost(post.id, { detailed_summary: result, detail_source: source });
+  if (!saved) throw new Error('Post removed during analysis');
+  return 'saved';
+}
+
 export interface ResortProgress { done: number; total: number; moved: number }
 export interface ResortMove { postId: number; from: number | null; to: number }
 export interface ResortResult {
+  noAi?: boolean;
   moved: number; checked: number; left: number; waiting: number; limited: 'device' | 'global' | null;
   /** What «Вернуть» needs: every move, and boards this run created. */
   moves: ResortMove[]; newBoards: number[];
 }
 
-/** Max AI requests per «Разобрать Misc» tap: keeps well inside the proxy's per-minute and daily limits. */
-export const RESORT_AI_BATCH = 15;
+// Bound manual work so a batch stays responsive and shares the existing AI quota.
+const RESORT_AI_BATCH = 8;
+let activeResort: Promise<ResortResult> | null = null;
 
-/**
- * «Разобрать Misc»: first a free pass by embeddings, then up to RESORT_AI_BATCH posts through the AI.
- * Closed posts without content stay (they're re-sorted automatically once they get a note/screenshot/IG login).
- * Only the board changes; title/summary/tags are kept.
- */
-export async function resortMisc(onProgress?: (p: ResortProgress) => void): Promise<ResortResult> {
+export function resortMisc(onProgress?: (p: ResortProgress) => void): Promise<ResortResult> {
+  if (activeResort) return activeResort;
+  activeResort = runMiscSort(onProgress).finally(() => { activeResort = null; });
+  return activeResort;
+}
+
+async function runMiscSort(onProgress?: (p: ResortProgress) => void): Promise<ResortResult> {
   await loadSettings();
   const auth = await getGeminiAuth();
   const posts = await db.miscPosts();
-  const waiting = posts.filter((p) => p.needsResort).length;
-  const todo = posts.filter((p) => !p.needsResort);
-  const res: ResortResult = { moved: 0, checked: 0, left: 0, waiting, limited: null, moves: [], newBoards: [] };
-  if (!todo.length || !canUseGemini(auth)) { res.left = todo.length; return res; }
-  const total = todo.length;
-  const report = () => onProgress?.({ done: res.checked, total, moved: res.moved });
-  report();
+  const res: ResortResult = { moved: 0, checked: 0, left: 0, waiting: 0, limited: null, moves: [], newBoards: [] };
+  if (!posts.length || !canUseGemini(auth)) { res.left = posts.length; res.noAi = !!posts.length; return res; }
   let boards = await db.aiBoards();
-  // 1) embeddings (already computed for most posts)
-  const prep = prepareBoardVectors(await boardVectors(boards, auth)); // centered once, reused for every post
-  const rest: db.Post[] = [];
-  for (const p of todo) {
-    const pick = p.embedding?.length ? pickBoard(p.embedding, prep) : null;
-    if (pick) { await db.updatePost(p.id, { board_id: pick.id }); await db.clearEmbedding(p.id); res.moves.push({ postId: p.id, from: p.boardId, to: pick.id }); res.moved++; res.checked++; report(); }
-    else rest.push(p);
-  }
-  // 2) AI, in a small batch
-  let used = 0;
-  for (const p of rest) {
-    if (used >= RESORT_AI_BATCH) break;
-    used++;
+  const batch = posts.slice(0, RESORT_AI_BATCH);
+  const report = () => onProgress?.({ done: res.checked, total: batch.length, moved: res.moved });
+  report();
+  for (const post of batch) {
     await idle();
     try {
-      const meta: Metadata = { url: p.url, platform: p.platform, title: p.title ?? undefined, description: p.description ?? undefined, author: p.author ?? undefined, blocked: p.metaBlocked, unavailable: p.unavailable, source: 'db' };
-      const sharedText = p.rawText ?? undefined, note = p.note ?? undefined;
-      // Same rule as for a new post: a thin caption means the picture decides. (Before 1.10.1 «Разобрать» never sent it.)
-      const image = p.localImage && shouldSendImage({ hasImage: true, shot: !!p.shot, aiVision: getSettings().aiVision, meta, sharedText, note })
-        ? await aiImage(p.localImage, p.shot ? 1080 : 768) : undefined;
-      const ai = await analyzePost({ meta, sharedText, note, boards, image, lang: getSettings().aiLang, boardLang: getLang() }, auth);
-      let choice = ai.choice ?? { kind: 'misc', confidence: 0, reason: 'ai' } as BoardChoice;
-      choice = await embeddingFallback(choice, boards, p, auth, p.embedding);
-      if (choice.kind !== 'misc') {
-        const id = await db.boardForChoice(choice, ai.boardEmoji);
-        const cur = await db.getPost(p.id);
-        if (cur && cur.boardId === p.boardId) { await db.updatePost(p.id, { board_id: id }); await db.clearEmbedding(p.id); res.moves.push({ postId: p.id, from: p.boardId, to: id }); res.moved++; }
-        if (!boards.some((b) => b.id === id)) res.newBoards.push(id);
-        if (choice.kind === 'new') boards = await db.aiBoards();
+      let meta = savedMetadata(post);
+      const sharedText = post.rawText ?? undefined;
+      const note = post.note ?? undefined;
+      if (!isShotUrl(post.url) && (post.needsResort || meta.blocked || meta.unavailable || isWeakText(meta, sharedText, note))) {
+        let fresh = { ...await fetchMetadata(post.url), url: post.url };
+        if (needsInstagramSession(fresh) && igLoaderReady()) fresh = await enrichInstagram(fresh);
+        if (!fresh.blocked && !fresh.unavailable) {
+          meta = { ...fresh, title: fresh.title ?? meta.title, description: fresh.description ?? meta.description, image: fresh.image ?? meta.image };
+        }
+      }
+      const useImage = shouldSendImage({ hasImage: !!(post.localImage || meta.image), shot: !!post.shot, aiVision: getSettings().aiVision, meta, sharedText, note });
+      const imageUrl = useImage && meta.image && meta.image !== post.image && !post.shot ? await cacheThumb(post.id, meta.image) : null;
+      const local = imageUrl ?? post.localImage ?? (useImage && meta.image ? await cacheThumb(post.id, meta.image) : null);
+      const image = useImage && local ? await aiImage(local, post.shot ? 1080 : 768) : undefined;
+      const input = { meta, sharedText, note, image, boards, lang: getSettings().aiLang, boardLang: getLang() };
+      const sources = summarySources({ ...input, shot: post.shot });
+      const weak = isWeakText(meta, sharedText, note);
+      const titleCanDescribeContent = !!meta.title && ['web', 'youtube', 'reddit', 'github'].includes(meta.platform);
+      const hasText = !!(meta.description?.trim() || sharedText?.trim() || note?.trim());
+      const noEvidence = (!image && !hasText && (!titleCanDescribeContent || meta.blocked || meta.unavailable)) || isOpaque(input);
+      if (noEvidence) {
+        res.waiting++;
+        await db.updatePost(post.id, { misc_checked_at: Date.now() }, undefined, { boardId: post.boardId, ready: true });
+      } else {
+        const ai = await analyzePost(input, auth);
+        const initial = ai.choice ?? { kind: 'misc', confidence: 0, reason: 'ai' };
+        const choice = await embeddingFallback(initial, boards, { ...post, aiTitle: ai.title ?? null, summary: ai.summary, tags: ai.tags, description: meta.description ?? null }, auth);
+        // Leave weak guesses in Misc, even when the model proposed a board.
+        const credible = choice.kind === 'existing' ? choice.confidence >= 0.65 || choice !== initial :
+          choice.kind === 'new' && choice.confidence >= 0.78;
+        const target = credible ? await db.boardForChoice(choice, ai.boardEmoji) : post.boardId;
+        const moved = target !== post.boardId && target != null;
+        if (moved && !boards.some((board) => board.id === target)) {
+          res.newBoards.push(target);
+          boards = await db.aiBoards();
+        }
+        const updated = await db.updatePost(post.id, {
+          ...metadataFields(meta), ...(local ? { local_image: local } : {}),
+          ai_title: ai.title ?? null, summary: ai.summary, tags: ai.tags, summary_sources: sources,
+          misc_checked_at: Date.now(), board_id: target, needs_resort: Number(!moved && weak && !image), status: 'done', last_error: null,
+        }, undefined, { boardId: post.boardId, ready: true });
+        if (updated) {
+          await db.clearEmbedding(post.id);
+          if (moved) { res.moves.push({ postId: post.id, from: post.boardId, to: target }); res.moved++; }
+        }
       }
     } catch (e: any) {
       if (e instanceof AiError && e.limit) { res.limited = e.limit.scope; break; }
       if (e instanceof AiError && !e.retryable) break;
+      await db.updatePost(post.id, { misc_checked_at: Date.now() }, undefined, { boardId: post.boardId, ready: true });
     }
     res.checked++;
     report();
-    await new Promise((r) => setTimeout(r, 1200)); // stay under the proxy's per-minute limit
+    if (res.checked < batch.length) await new Promise(resolve => setTimeout(resolve, 1200));
   }
-  res.left = Math.max(0, total - res.checked);
+  res.left = posts.length - res.checked;
   backfillEmbeddings().catch(() => {});
   return res;
 }

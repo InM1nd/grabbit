@@ -62,3 +62,45 @@ test('default boards: one board across languages, localized names, rename makes 
   assert.deepEqual({ ...row }, { name: 'Всяке', key: null });
   setUiLang('ru');
 });
+
+test('a targeted lookup finds a fresh post regardless of backlog, while honoring retry time', { skip: !sqlite }, async () => {
+  for (let i = 0; i < 25; i++) {
+    await db.insertPost({ url: 'https://example.com/backlog/' + i, rawText: null, platform: 'web' });
+  }
+  const id = await db.insertPost({ url: 'https://example.com/fresh', rawText: null, platform: 'web' });
+  const now = Date.now();
+  assert.equal((await db.nextPendingPost(now, id))?.id, id);
+  await db.updatePost(id, { next_try_at: now + 30_000 });
+  assert.equal(await db.nextPendingPost(now, id), null);
+  assert.notEqual((await db.nextPendingPost(now))?.id, id);
+});
+
+test('analysis saves its summary without overwriting a newer board selection', { skip: !sqlite }, async () => {
+  const id = await db.insertPost({ url: 'https://example.com/board-race', rawText: null, platform: 'web' });
+  const manual = await db.getOrCreateBoard('Manual board');
+  const suggested = await db.getOrCreateBoard('Suggested board');
+  await db.updatePost(id, { board_id: manual });
+  await db.updatePost(id, { summary: 'Available now', status: 'done' }, { from: null, to: suggested, needsResort: false });
+  const post = await db.getPost(id);
+  assert.equal(post.boardId, manual);
+  assert.equal(post.summary, 'Available now');
+
+  await db.updatePost(id, { summary: 'Updated again' }, { from: manual, to: suggested, needsResort: true });
+  const moved = await db.getPost(id);
+  assert.equal(moved.boardId, suggested);
+  assert.equal(moved.needsResort, true);
+});
+
+test('a stale Misc move cannot replace a manual board and summary sources survive reopening', { skip: !sqlite }, async () => {
+  const misc = await db.miscBoardId();
+  const manual = await db.getOrCreateBoard('Manual assignment');
+  const id = await db.insertPost({ url: 'https://example.com/guarded-move', rawText: null, platform: 'web', boardId: misc });
+  await db.updatePost(id, { board_id: manual, summary_sources: ['caption', 'cover'], detailed_summary: 'More detail', detail_source: 'article' });
+  assert.equal(await db.updatePost(id, { board_id: misc, summary: 'Stale' }, undefined, { boardId: misc }), false);
+  assert.equal(await db.updatePost(id, { board_id: misc }, undefined, { boardId: manual, ready: true }), false);
+  const post = await db.getPost(id);
+  assert.equal(post.boardId, manual);
+  assert.deepEqual(post.summarySources, ['caption', 'cover']);
+  assert.equal(post.detailSource, 'article');
+  assert.equal(post.detailedSummary, 'More detail');
+});

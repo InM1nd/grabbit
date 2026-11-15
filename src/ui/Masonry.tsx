@@ -3,10 +3,11 @@ import React, { useCallback } from 'react';
 import { RefreshControl, View, useWindowDimensions } from 'react-native';
 import type { Post } from '../db';
 import { useColors } from '../theme';
-import { PostCard } from './PostCard';
+import { PostCard, type CardAction } from './PostCard';
 
 interface Props {
   posts: Post[];
+  action?: CardAction;
   onPress: (p: Post) => void;
   onSwipeDelete?: (p: Post) => void;
   onLongPress?: (p: Post) => void;
@@ -21,15 +22,15 @@ const keyOf = (p: Post) => String(p.id);
 const typeOf = (p: Post) => ((p.localImage || p.image) ? 'img' : 'txt');
 
 /** Virtualized two-column Pinterest-style layout (FlashList masonry): only visible cards are mounted. */
-export function Masonry({ posts, onPress, onSwipeDelete, onLongPress, header, empty, refreshing, onRefresh }: Props) {
+export function Masonry({ posts, onPress, onSwipeDelete, onLongPress, action, header, empty, refreshing, onRefresh }: Props) {
   const c = useColors();
   const { width } = useWindowDimensions();
   const colW = Math.floor((width - PAD * 2 - GAP) / 2);
   const renderItem = useCallback(({ item, index }: { item: Post; index: number }) => (
     <View style={{ paddingLeft: index % 2 === 0 ? PAD : GAP / 2, paddingRight: index % 2 === 0 ? GAP / 2 : PAD }}>
-      <PostCard post={item} width={colW} onPress={onPress} onSwipeDelete={onSwipeDelete} onLongPress={onLongPress} />
+      <PostCard post={item} width={colW} onPress={onPress} onSwipeDelete={onSwipeDelete} onLongPress={onLongPress} action={action} />
     </View>
-  ), [colW, onPress, onSwipeDelete, onLongPress]);
+  ), [colW, onPress, onSwipeDelete, onLongPress, action]);
   return (
     <FlashList
       data={posts}

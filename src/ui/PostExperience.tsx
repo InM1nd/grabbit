@@ -5,9 +5,11 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, AccessibilityInfo, Animated, Easing, KeyboardAvoidingView, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { Board, Post } from '../db';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { normalizeUrl, PLATFORM_LABEL } from '../core/url';
+import { extractUrl, normalizeUrl, PLATFORM_LABEL } from '../core/url';
 import { t } from '../i18n';
+import type { SummarySource } from '../core/analysisSources';
 import { PLATFORM_ICON, timeAgo, useColors } from '../theme';
+import { SaveRabbit } from './SaveRabbit';
 import { Appear, haptic, MARK_ICON, PopIcon, PressScale, useReduceMotion } from './common';
 
 export type NewPost = { url: string; note: string; boardId: number | null };
@@ -56,10 +58,15 @@ function BoardPicker({ boards, value, onChange, onNew, automatic = false }: { bo
   </View>;
 }
 
-export function PostPanel({ post, boards, onUpdate, onDelete, onClose, onMenu, onEditNote, onNewBoard, onRemoveTag, onAddTag, extraContent, busy = false }: {
+const SOURCE_LABEL: Record<SummarySource, () => string> = {
+  caption: () => t('Описание автора'), share: () => t('Текст из ссылки'), note: () => t('Твоя заметка'),
+  cover: () => t('Обложка'), screenshot: () => t('Скриншот'), title: () => t('Заголовок'),
+};
+
+export function PostPanel({ post, boards, onUpdate, onDelete, onClose, onMenu, onEditNote, onNewBoard, onRemoveTag, onAddTag, extraContent, reminder, onDeepAnalysis, deepBusy = false, busy = false }: {
   post: Post; boards: Board[]; onUpdate: (patch: Partial<Post>) => void; onDelete: () => void; onClose: () => void;
   onMenu?: () => void; onEditNote?: () => void; onNewBoard?: () => void; onRemoveTag?: (tag: string) => void;
-  onAddTag?: (tag: string) => void; extraContent?: React.ReactNode; busy?: boolean;
+  onAddTag?: (tag: string) => void; extraContent?: React.ReactNode; reminder?: React.ReactNode; onDeepAnalysis?: () => void; deepBusy?: boolean; busy?: boolean;
 }) {
   const c = useColors();
   const [tagInput, setTagInput] = useState('');
@@ -79,13 +86,32 @@ export function PostPanel({ post, boards, onUpdate, onDelete, onClose, onMenu, o
       <View style={styles.sourceRow}><View style={[styles.sourceIcon, { backgroundColor: c.card }]}><Ionicons name={PLATFORM_ICON[post.platform] as React.ComponentProps<typeof Ionicons>['name']} color={c.sub} size={15} /></View><Text numberOfLines={1} style={{ color: c.sub, fontSize: 12, flexShrink: 1 }}>{source}{post.author ? ` · ${post.author}` : ''} · {timeAgo(post.createdAt)}</Text><View style={{ flex: 1 }} /><Ionicons name="bookmark" color={c.accent} size={16} /></View>
       <Text accessibilityRole="header" selectable style={[styles.title, { color: c.text }]}>{post.aiTitle || post.title || post.url}</Text>
       {(post.status === 'pending' || busy) && <View style={[styles.summary, { backgroundColor: c.card }]}><ActivityIndicator color={c.accent} /><Text style={{ color: c.sub }}>{t('ИИ разбирает пост…')}</Text></View>}
-      {!!post.summary && <View style={[styles.summary, { backgroundColor: c.card }]}><View style={styles.inline}><Ionicons name="sparkles-outline" size={15} color={c.accent} /><Text style={[styles.eyebrow, { color: c.sub }]}>{t('КОРОТКО О ПОСТЕ')}</Text></View><Text selectable style={[styles.body, { color: c.text }]}>{post.summary}</Text></View>}
+      {!!post.summary && <View style={[styles.summary, { backgroundColor: c.card }]}>
+        <View style={styles.inline}><Ionicons name="sparkles-outline" size={15} color={c.accent} />
+          <Text style={[styles.eyebrow, { color: c.sub }]}>{t('КОРОТКО О ПОСТЕ')}</Text></View>
+        <Text selectable style={[styles.body, { color: c.text }]}>{post.summary}</Text>
+        {post.summarySources != null && <Text style={{ color: c.sub, fontSize: 12 }}>
+          {post.summarySources.length ? t('Источники: {sources}', { sources: post.summarySources.map(source => SOURCE_LABEL[source]()).join(' · ') }) : t('Удалось прочитать только ссылку')}
+        </Text>}
+      </View>}
+      {(post.detailedSummary || onDeepAnalysis) && <View style={[styles.summary, { backgroundColor: c.card, marginTop: 8 }]}>
+        {!!post.detailedSummary && <>
+          <Text style={[styles.eyebrow, { color: c.sub }]}>{post.detailSource === 'transcript' ? t('По транскрипту') : t('По тексту статьи')}</Text>
+          <Text selectable style={[styles.body, { color: c.text }]}>{post.detailedSummary}</Text>
+        </>}
+        {onDeepAnalysis && <Pressable accessibilityRole="button" disabled={deepBusy} accessibilityState={{ busy: deepBusy }}
+          onPress={onDeepAnalysis} style={[styles.inline, { minHeight: 30 }]}>
+          {deepBusy ? <ActivityIndicator size="small" color={c.accent} /> : <Ionicons name="reader-outline" size={18} color={c.accent} />}
+          <Text style={{ color: c.accent, fontWeight: '600' }}>{deepBusy ? t('Читаю источник…') : post.detailedSummary ? t('Обновить разбор') : t('Разобрать подробнее')}</Text>
+        </Pressable>}
+      </View>}
       <Text style={[styles.section, { color: c.sub }]}>{t('ЧТО С ЭТИМ СДЕЛАТЬ')}</Text>
       <View style={styles.marks}>{([{ value: 'try', label: t('Попробовать'), icon: MARK_ICON.try }, { value: 'done', label: t('Сделано'), icon: MARK_ICON.done }, { value: 'skip', label: t('Неважно'), icon: MARK_ICON.skip }] as const).map(mark => <PressScale key={mark.value} accessibilityRole="button" aria-pressed={post.mark === mark.value} onPress={() => { haptic(post.mark === mark.value ? 'toggle-off' : 'toggle-on'); onUpdate({ mark: post.mark === mark.value ? null : mark.value }); }} style={[styles.mark, { backgroundColor: post.mark === mark.value ? c.accentSoft : c.card, borderColor: post.mark === mark.value ? c.accent : 'transparent' }]}><PopIcon active={post.mark === mark.value} name={mark.icon} color={post.mark === mark.value ? c.accent : c.sub} size={19} /><Text style={{ color: c.text, fontSize: 11, fontWeight: '500' }}>{mark.label}</Text></PressScale>)}</View>
-      <Text style={[styles.section, { color: c.sub }]}>{t('НА СВОЁМ МЕСТЕ')}</Text>
+
       <View style={[styles.boardCard, { borderColor: c.line }]}>
       <Pressable accessibilityRole="button" accessibilityLabel={t('Изменить доску')} aria-expanded={pickingBoard} onPress={() => setPickingBoard(v => !v)} style={styles.boardRow}>{board?.emoji ? <Text style={{ fontSize: 24 }}>{board.emoji}</Text> : <Ionicons name="remove-circle-outline" size={24} color={c.sub} />}<View style={{ flex: 1, gap: 3 }}><Text style={{ color: c.sub, fontSize: 11 }}>{t('ДОСКА')}</Text><Text style={{ color: c.text, fontSize: 15, fontWeight: '600' }}>{board?.name || t('Без доски')}</Text></View><Animated.View style={{ transform: [{ rotate: chevron.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '-90deg'] }) }] }}><Ionicons name="chevron-forward" size={18} color={c.sub} /></Animated.View></Pressable>
       {pickingBoard && <Appear dy={-6} style={[styles.boardList, { borderColor: c.line }]}><BoardPicker boards={boards} value={post.boardId} onNew={onNewBoard} onChange={id => { onUpdate({ boardId: id }); setPickingBoard(false); }} /></Appear>}
+      {reminder}
       </View>
       {!!post.tags.length && <View style={[styles.chips, { flexWrap: 'wrap', paddingTop: 14 }]}>{post.tags.map(tag => <Pressable key={tag} onPress={() => onRemoveTag?.(tag)} disabled={!onRemoveTag} style={[styles.tag, { backgroundColor: c.card }]}><Text style={{ color: c.sub, fontSize: 12 }}>#{tag}</Text></Pressable>)}</View>}
       {onAddTag && <TextInput accessibilityLabel={t('+ тег')} value={tagInput} onChangeText={setTagInput} placeholder={t('+ тег')} placeholderTextColor={c.faint} onSubmitEditing={() => { const tag = tagInput.trim().replace(/^#/, '').toLowerCase(); if (tag) onAddTag(tag); setTagInput(''); }} style={[styles.tag, { color: c.text, backgroundColor: c.card, marginTop: 8, minHeight: 40 }]} />}
@@ -99,18 +125,19 @@ export function PostPanel({ post, boards, onUpdate, onDelete, onClose, onMenu, o
   </Panel>;
 }
 
-export function AddPostPanel({ boards, posts, onSave, onOpen, onClose, initialUrl = '', preview = false }: {
+export function AddPostPanel({ boards, posts, onSave, onOpen, onClose, initialBoardId = null, preview = false }: {
   boards: Board[]; posts: Post[]; onSave: (input: NewPost) => Post | Promise<Post>; onOpen: (post: Post) => void; onClose: () => void;
-  initialUrl?: string; preview?: boolean;
+  initialBoardId?: number | null; preview?: boolean;
 }) {
   const c = useColors();
-  const [url, setUrl] = useState(initialUrl);
+  const [url, setUrl] = useState('');
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const [note, setNote] = useState('');
-  const [boardId, setBoardId] = useState<number | null>(null);
+  const [boardId, setBoardId] = useState<number | null>(initialBoardId);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState<Post | null>(null);
+  const [duplicate, setDuplicate] = useState<Post | null>(null);
   const input = useRef<TextInput>(null);
   const normalize = (raw: string) => normalizeUrl(new URL(/^[a-z][a-z\d+.-]*:/i.test(raw) ? raw : `https://${raw}`).href);
   const save = async () => {
@@ -122,26 +149,36 @@ export function AddPostPanel({ boards, posts, onSave, onOpen, onClose, initialUr
       const parsed = new URL(clean);
       if (!['https:', 'http:'].includes(parsed.protocol) || !parsed.hostname.includes('.')) throw new Error();
     } catch { setError(t('Вставь полную ссылку, например https://example.com/post')); input.current?.focus(); return; }
-    if (posts.some(post => normalize(post.url) === clean)) { setError(t('Этот пост уже сохранён. Найди его в ленте.')); input.current?.focus(); return; }
+    const existing = posts.find((post) => normalizeUrl(post.url) === clean);
+    if (existing) {
+      setError('');
+      setDuplicate(existing);
+      return;
+    }
     setError('');
     savingRef.current = true; setSaving(true);
     try { setSaved(await onSave({ url: clean, note: note.trim(), boardId })); }
     catch (e) { setError(e instanceof Error ? e.message : t('Не удалось сохранить. Попробуй ещё раз.')); }
     finally { savingRef.current = false; setSaving(false); }
   };
-  const paste = async () => { try { const text = await Clipboard.getStringAsync(); if (!text.trim()) { setError(t('В буфере нет ссылки. Скопируй её или введи вручную.')); return; } setUrl(text.trim()); setError(''); } catch { setError(t('Нет доступа к буферу. Вставь ссылку в поле вручную.')); } };
+  const paste = async () => { try { const text = extractUrl(await Clipboard.getStringAsync()); if (!text) { setError(t('В буфере нет ссылки. Скопируй её или введи вручную.')); return; } setUrl(text); setDuplicate(null); setError(''); } catch { setError(t('Нет доступа к буферу. Вставь ссылку в поле вручную.')); } };
   const savedBoard = boards.find(b => b.id === saved?.boardId);
   return <Panel title={saved ? t('Готово') : t('Новое сохранение')} onClose={onClose} closeDisabled={saving} footer={saved ? <View style={{ gap: 12 }}><Primary label={t('Посмотреть пост')} icon="arrow-forward" onPress={() => onOpen(saved)} /><Pressable accessibilityRole="button" onPress={() => { setSaved(null); setUrl(''); setNote(''); setError(''); }} style={styles.secondary}><Text style={{ color: c.sub, fontSize: 14 }}>{t('Добавить ещё')}</Text></Pressable></View> : <><Primary label={saving ? t('Сохраняю…') : t('Сохранить на потом')} icon="bookmark-outline" disabled={saving} onPress={() => { void save(); }} />{preview && <Text style={[styles.demo, { color: c.sub }]}>{t('Дизайн-превью · сохранение только в этой сессии')}</Text>}</>}>
     <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.addContent}>
       {saved ? <View style={styles.success}>
-        <View style={[styles.successIcon, { backgroundColor: c.accentSoft }]}><Ionicons name="checkmark" size={40} color={c.accent} /></View>
+        <View style={styles.successIcon}><SaveRabbit /></View>
         <Text accessibilityRole="header" style={[styles.successTitle, { color: c.text }]}>{t('Теперь не потеряется')}</Text>
         <Text style={[styles.successSub, { color: c.sub }]}>{t('Ссылка уже на твоей полке.')}{savedBoard ? `\n${savedBoard.emoji} ${savedBoard.name}` : '\n' + t('Можно вернуться к ней в ленте.')}</Text>
         <View style={[styles.savedCard, { backgroundColor: c.card }]}><View style={[styles.savedIcon, { backgroundColor: c.bg }]}><Ionicons name="link-outline" color={c.accent} size={24} /></View><View style={{ flex: 1, gap: 5 }}><Text style={{ color: c.text, fontSize: 15, fontWeight: '600' }} numberOfLines={1}>{saved.aiTitle || saved.title || new URL(saved.url).hostname}</Text><Text style={{ color: c.sub, fontSize: 12 }} numberOfLines={1}>{saved.url}</Text></View><Ionicons name="bookmark" color={c.accent} size={18} /></View>
       </View> : <>
         <View style={styles.addIntro}><Image source={require('../../assets/icon.png')} style={styles.mascot} /><View style={{ flex: 1 }}><Text style={[styles.addHeadline, { color: c.text }]}>{t('Хорошие находки — сюда')}</Text><Text style={{ color: c.sub, fontSize: 13, lineHeight: 19 }}>{t('Пост, видео, статья или место.')}{ '\n' }{t('Сохрани сейчас, вернись потом.')}</Text></View></View>
         <Text style={[styles.fieldLabel, { color: c.text }]}>{t('Ссылка')}</Text>
-        <View style={[styles.urlField, { backgroundColor: c.card, borderColor: error ? c.danger : c.line }]}><Ionicons name="link-outline" color={c.sub} size={20} /><TextInput ref={input} accessibilityLabel={t('Ссылка на пост')} aria-invalid={!!error} keyboardType="url" autoCapitalize="none" autoCorrect={false} value={url} onChangeText={value => { setUrl(value); setError(''); }} onSubmitEditing={save} placeholder="https://…" placeholderTextColor={c.faint} style={[styles.urlInput, { color: c.text }]} /><Pressable accessibilityRole="button" accessibilityLabel={t('Вставить из буфера')} onPress={() => { void paste(); }} style={styles.paste}><Text style={{ color: c.accent, fontSize: 12, fontWeight: '600' }}>{t('Вставить')}</Text></Pressable></View>
+        <View style={[styles.urlField, { backgroundColor: c.card, borderColor: error ? c.danger : c.line }]}><Ionicons name="link-outline" color={c.sub} size={20} /><TextInput ref={input} accessibilityLabel={t('Ссылка на пост')} aria-invalid={!!error} keyboardType="url" autoCapitalize="none" autoCorrect={false} value={url} onChangeText={value => { setUrl(value); setDuplicate(null); setError(''); }} onSubmitEditing={save} placeholder="https://…" placeholderTextColor={c.faint} style={[styles.urlInput, { color: c.text }]} /><Pressable accessibilityRole="button" accessibilityLabel={t('Вставить из буфера')} onPress={() => { void paste(); }} style={styles.paste}><Text style={{ color: c.accent, fontSize: 12, fontWeight: '600' }}>{t('Вставить')}</Text></Pressable></View>
+        {duplicate && <Pressable accessibilityRole="button" onPress={() => onOpen(duplicate)} style={[styles.duplicate, { backgroundColor: c.accentSoft }]}>
+          <Ionicons name="bookmark-outline" color={c.accent} size={19} />
+          <Text style={{ color: c.text, flex: 1 }}>{t('Уже сохранено')}</Text>
+          <Text style={{ color: c.accent, fontWeight: '600' }}>{t('Открыть пост')}</Text>
+        </Pressable>}
         {!!error && <Text accessibilityRole="alert" style={[styles.error, { color: c.danger }]}>{error}</Text>}
         <Text style={[styles.fieldLabel, { color: c.text, marginTop: 24 }]}>{t('Куда положить')}</Text>
         <BoardPicker automatic={!preview} boards={boards} value={boardId} onChange={setBoardId} />
@@ -160,7 +197,8 @@ const styles = StyleSheet.create({
   footer: { padding: 16, paddingBottom: 22, borderTopWidth: StyleSheet.hairlineWidth }, footerRow: { flexDirection: 'row', gap: 10 }, primary: { minHeight: 52, paddingHorizontal: 20, borderRadius: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 }, primaryText: { color: '#fff', fontSize: 15, fontWeight: '700', flexShrink: 1 }, copyButton: { width: 52, height: 52, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   postContent: { paddingHorizontal: 20, paddingBottom: 12 }, hero: { width: '100%', height: 228, borderRadius: 23 }, linkHero: { height: 140, borderRadius: 23, alignItems: 'center', justifyContent: 'center', gap: 12 }, sourceRow: { flexDirection: 'row', gap: 8, alignItems: 'center', marginTop: 18, marginBottom: 12 }, sourceIcon: { width: 28, height: 28, borderRadius: 10, alignItems: 'center', justifyContent: 'center' }, title: { fontSize: 27, lineHeight: 32, fontWeight: '700', letterSpacing: -0.7, marginBottom: 18 },
   summary: { padding: 16, borderRadius: 19, gap: 10 }, inline: { flexDirection: 'row', alignItems: 'center', gap: 7 }, eyebrow: { fontSize: 10, letterSpacing: 1, fontWeight: '600' }, body: { fontSize: 14, lineHeight: 22 }, section: { fontSize: 10, letterSpacing: 1.1, fontWeight: '600', marginTop: 24, marginBottom: 11 }, marks: { flexDirection: 'row', gap: 7 }, mark: { flex: 1, borderWidth: 1, borderRadius: 15, minHeight: 66, alignItems: 'center', justifyContent: 'center', gap: 6 },
-  boardCard: { borderWidth: 1, borderRadius: 17, overflow: 'hidden' }, boardRow: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14 }, boardList: { borderTopWidth: StyleSheet.hairlineWidth, padding: 12 }, chips: { flexDirection: 'row', gap: 7, paddingVertical: 2 }, chip: { minHeight: 40, borderRadius: 14, paddingHorizontal: 12, borderWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 6 }, tag: { borderRadius: 10, paddingHorizontal: 10, paddingVertical: 7 }, noteHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 24, marginBottom: 10 }, note: { borderRadius: 16, padding: 14, minHeight: 82, textAlignVertical: 'top', fontSize: 14, lineHeight: 21 }, originalRow: { borderTopWidth: 1, marginTop: 24, paddingTop: 18, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, deleteButton: { minHeight: 48, marginTop: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  boardCard: { marginTop: 12, borderWidth: 1, borderRadius: 17, overflow: 'hidden' }, boardRow: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14 }, boardList: { borderTopWidth: StyleSheet.hairlineWidth, padding: 12 }, chips: { flexDirection: 'row', gap: 7, paddingVertical: 2 }, chip: { minHeight: 40, borderRadius: 14, paddingHorizontal: 12, borderWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 6 }, tag: { borderRadius: 10, paddingHorizontal: 10, paddingVertical: 7 }, noteHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 24, marginBottom: 10 }, note: { borderRadius: 16, padding: 14, minHeight: 82, textAlignVertical: 'top', fontSize: 14, lineHeight: 21 }, originalRow: { borderTopWidth: 1, marginTop: 24, paddingTop: 18, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, deleteButton: { minHeight: 48, marginTop: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   addContent: { paddingHorizontal: 20, paddingBottom: 20 }, addIntro: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 26, marginTop: 4 }, mascot: { width: 52, height: 52, borderRadius: 17 }, addHeadline: { fontSize: 19, fontWeight: '700', letterSpacing: -0.4, marginBottom: 5 }, fieldLabel: { fontSize: 14, fontWeight: '600', marginBottom: 10 }, urlField: { borderWidth: 1, minHeight: 54, borderRadius: 17, flexDirection: 'row', alignItems: 'center', paddingLeft: 14, gap: 8 }, urlInput: { flex: 1, minWidth: 0, fontSize: 14, height: 52 }, paste: { paddingHorizontal: 12, minHeight: 48, justifyContent: 'center' }, error: { fontSize: 12, lineHeight: 18, marginTop: 8 }, addHint: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, padding: 14, borderRadius: 16, marginTop: 20 }, demo: { textAlign: 'center', fontSize: 10, marginTop: 10 },
-  secondary: { alignItems: 'center', justifyContent: 'center', minHeight: 38 }, success: { alignItems: 'center', paddingTop: 20, paddingBottom: 14 }, successIcon: { width: 80, height: 80, borderRadius: 28, alignItems: 'center', justifyContent: 'center', marginBottom: 22 }, successTitle: { fontSize: 25, letterSpacing: -0.6, fontWeight: '700', marginBottom: 12 }, successSub: { fontSize: 14, textAlign: 'center', lineHeight: 23 }, savedCard: { alignSelf: 'stretch', marginTop: 26, padding: 14, borderRadius: 18, flexDirection: 'row', alignItems: 'center', gap: 12 }, savedIcon: { width: 46, height: 46, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  duplicate: { marginTop: 10, borderRadius: 12, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  secondary: { alignItems: 'center', justifyContent: 'center', minHeight: 38 }, success: { alignItems: 'center', paddingTop: 20, paddingBottom: 14 }, successIcon: { marginBottom: 22 }, successTitle: { fontSize: 25, letterSpacing: -0.6, fontWeight: '700', marginBottom: 12 }, successSub: { fontSize: 14, textAlign: 'center', lineHeight: 23 }, savedCard: { alignSelf: 'stretch', marginTop: 26, padding: 14, borderRadius: 18, flexDirection: 'row', alignItems: 'center', gap: 12 }, savedIcon: { width: 46, height: 46, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
 });

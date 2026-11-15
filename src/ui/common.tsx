@@ -1,7 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as Haptics from 'expo-haptics';
 import React, { useEffect, useRef, useState } from 'react';
-import { AccessibilityInfo, Animated, KeyboardAvoidingView, Platform, Modal, Pressable, StyleSheet, Text, TextInput, View, type PressableProps, type StyleProp, type ViewStyle } from 'react-native';
+import { AccessibilityInfo, Animated, KeyboardAvoidingView, Platform, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type PressableProps, type StyleProp, type ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '../theme';
 import { t } from '../i18n';
@@ -92,12 +92,14 @@ export function ActionSheet({ visible, title, actions, onClose }: { visible: boo
         <Pressable style={[styles.sheet, { backgroundColor: c.elevated, paddingBottom: 12 + insets.bottom }]}>
           <View style={[styles.grabber, { backgroundColor: c.line }]} />
           {!!title && <Text style={[styles.sheetTitle, { color: c.sub }]} numberOfLines={2}>{title}</Text>}
+          <ScrollView style={{ maxHeight: 360 }}>
           {actions.map((a) => (
             <Pressable key={a.label} onPress={() => { onClose(); setTimeout(a.onPress, 120); }} style={({ pressed }) => [styles.row, pressed && { backgroundColor: c.card }]}>
               {a.icon && <Ionicons name={a.icon} size={20} color={a.destructive ? c.danger : c.text} style={{ width: 28 }} />}
               <Text style={[styles.rowText, { color: a.destructive ? c.danger : c.text }]}>{a.label}</Text>
             </Pressable>
           ))}
+          </ScrollView>
         </Pressable>
       </Pressable>
     </Modal>
