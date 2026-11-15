@@ -2,7 +2,6 @@ import { DialogProvider, useDialog } from './src/ui/dialog';
 import { clearWebSession } from './modules/grabbit-cookies';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import NetInfo from '@react-native-community/netinfo';
-import * as Clipboard from 'expo-clipboard';
 import * as Notifications from 'expo-notifications';
 import { useShareIntent } from 'expo-share-intent';
 import { StatusBar } from 'expo-status-bar';
@@ -12,18 +11,21 @@ import { AddPostPanel, type NewPost } from './src/ui/PostExperience';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, AppState, BackHandler, Pressable, StyleSheet, Text, TextInput, View, useColorScheme } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { postsInBoard, type BoardView } from './src/core/boardView';
 import { extractUrl } from './src/core/url';
 import * as db from './src/db';
 import { onDataChanged } from './src/events';
-import { attachScreenshot, deleteThumb, latestClosedPost, processQueue, reprocessInstagramUnavailable, retryAllNow, saveScreenshot, saveShared, semanticSearch, undoResort, type ResortResult } from './src/processor';
-import { ensurePermission, rescheduleReminder, setupNotifications } from './src/reminders';
+import { attachScreenshot, deleteThumb, latestClosedPost, processQueue, reprocessInstagramUnavailable, saveScreenshot, saveShared, semanticSearch, resortMisc, undoResort, type ResortResult } from './src/processor';
+import { cancelPostReminder, ensurePermission, rescheduleReminder, setupNotifications } from './src/reminders';
 import { updateSettings, useSettings } from './src/settings';
 import { DARK, LIGHT, ThemeContext, useColors } from './src/theme';
 import { BoardsScreen } from './src/ui/BoardsScreen';
-import { ActionSheet, haptic, IconBtn, MARK_ICON, markLabel } from './src/ui/common';
+import { ActionSheet, haptic, IconBtn, MARK_ICON, markLabel, PromptModal } from './src/ui/common';
 import { DetailScreen } from './src/ui/DetailScreen';
+import { BoardFeed } from './src/ui/BoardFeed';
 import { FeedScreen } from './src/ui/FeedScreen';
 import { MiscSorter } from './src/ui/MiscSorter';
+import { InboxBoardPicker } from './src/ui/InboxBoardPicker';
 import { FilterSheet } from './src/ui/FilterSheet';
 import { applyFilter, DEFAULT_FILTER, type FeedFilter } from './src/core/filters';
 import { HiddenInstagramLoader, InstagramLoginModal } from './src/ui/InstagramWeb';
@@ -62,9 +64,10 @@ function Main() {
   // Feed filters live for the whole session (App stays mounted).
   const [filter, setFilter] = useState<FeedFilter>(DEFAULT_FILTER);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [inboxPicker, setInboxPicker] = useState<db.Post | null>(null);
+  const [newInboxBoard, setNewInboxBoard] = useState<db.Post | null>(null);
   const [basePosts, setBasePosts] = useState<db.Post[]>([]);
-  const boardId = filter.boards.length === 1 ? filter.boards[0] : null;
-  const setBoardId = useCallback((id: number | null) => setFilter((f) => ({ ...f, boards: id == null ? [] : [id] })), []);
+  const [boardView, setBoardView] = useState<BoardView | null>(null);
   const [query, setQuery] = useState('');
   const [searching, setSearching] = useState(false);
   const [debQuery, setDebQuery] = useState('');
@@ -73,14 +76,13 @@ function Main() {
   const [markPost, setMarkPost] = useState<db.Post | null>(null);
   const offlineWarned = useRef(false);
   useEffect(() => { const h = setTimeout(() => setDebQuery(query), query ? 450 : 0); return () => clearTimeout(h); }, [query]);
-  const [posts, setPosts] = useState<db.Post[]>([]);
   const [boards, setBoards] = useState<db.Board[]>([]);
-  const [unsorted, setUnsorted] = useState(0);
+  const [libraryPosts, setLibraryPosts] = useState<db.Post[]>([]);
   const [pending, setPending] = useState(0);
   const [hidden, setHidden] = useState<Set<number>>(new Set());
   const [detailId, setDetailId] = useState<number | null>(null);
   const [saveState, setSaveState] = useState<SaveState>(null);
-  const [adding, setAdding] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(consumeReopenSettings);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [igMode, setIgMode] = useState<'login' | 'logout' | null>(null);
@@ -94,9 +96,9 @@ function Main() {
   const showToast = useCallback((t: Toast, ms = 2200) => {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     setToastState(t);
-    Animated.timing(toastA, { toValue: 1, duration: 160, useNativeDriver: true }).start();
+    Animated.timing(toastA, { toValue: 1, duration: 160, useNativeDriver: true, isInteraction: false }).start();
     toastTimer.current = setTimeout(() => {
-      Animated.timing(toastA, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => setToastState(null));
+      Animated.timing(toastA, { toValue: 0, duration: 200, useNativeDriver: true, isInteraction: false }).start(() => setToastState(null));
     }, ms);
   }, [toastA]);
   const toast = useCallback((msg: string) => showToast({ msg }), [showToast]);
@@ -104,7 +106,11 @@ function Main() {
   // ---------- data ----------
   const reload = useCallback(async () => {
     const q = debQuery.trim();
-    const [textHits, b, all, n] = await Promise.all([db.listPosts({ query: q }), db.listBoards(), db.listPosts(), db.countPending()]);
+    const [hitsByText, b, all, n] = await Promise.all([q ? db.listPosts({ query: q }) : null, db.listBoards(), db.listPosts(), db.countPending()]);
+    setBoards(b);
+    setLibraryPosts((prev) => reuseUnchanged(prev, all));
+    setPending(n);
+    const textHits = hitsByText ?? all;
     let base = textHits;
     let sem = false;
     if (q && semantic) {
@@ -119,14 +125,9 @@ function Main() {
         toast(t('Поиск по смыслу недоступен — ищу по словам'));
       }
     }
-    const p = applyFilter(base, filter, sem);
-    setBasePosts(base);
+    setBasePosts((prev) => reuseUnchanged(prev, base));
     setSemActive(sem);
-    setPosts((prev) => reuseUnchanged(prev, p));
-    setBoards(b);
-    setUnsorted(all.filter((x) => x.boardId == null).length);
-    setPending(n);
-  }, [filter, debQuery, semantic, toast]);
+  }, [debQuery, semantic, toast]);
   useEffect(() => { const timer = setTimeout(() => { void reload(); }, 0); return () => clearTimeout(timer); }, [reload]);
   useEffect(() => {
     let t: ReturnType<typeof setTimeout> | null = null;
@@ -154,7 +155,13 @@ function Main() {
     const tick = setInterval(() => { if (AppState.currentState === 'active') processQueue(); }, 45_000);
     const openFromNotif = (r: Notifications.NotificationResponse | null) => {
       const id = Number((r?.notification.request.content.data as any)?.postId);
-      if (id) { setDetailId(id); setTab('feed'); }
+      if (Number.isSafeInteger(id) && id > 0) {
+        void db.getPost(id).then((post) => {
+          if (!post) return;
+          setAdding(false); setSettingsOpen(false); setBoardView(null);
+          setDetailId(id); setTab('feed');
+        }).catch(() => {});
+      }
     };
     Notifications.getLastNotificationResponseAsync().then((r) => { openFromNotif(r); Notifications.clearLastNotificationResponseAsync().catch(() => {}); });
     const nsub = Notifications.addNotificationResponseReceivedListener(openFromNotif);
@@ -168,7 +175,7 @@ function Main() {
     resetShareIntent();
     (async () => {
       fromShare.current = true;
-      setDetailId(null); setSettingsOpen(false); setAdding(null);
+      setDetailId(null); setSettingsOpen(false); setAdding(false);
       const img = si.files?.find((f) => (f.mimeType || '').startsWith('image/'));
       if (img) {
         try {
@@ -215,6 +222,7 @@ function Main() {
       if (undone) return;
       deleteThumb(p.id);
       await db.deletePost(p.id);
+      void cancelPostReminder(p.id).catch(() => {});
       setHidden((h) => { const n = new Set(h); n.delete(p.id); return n; });
     }, 4200);
   }, [showToast, toastA]);
@@ -238,25 +246,19 @@ function Main() {
       if (saveState) { finishShare(); return true; }
       if (searching) { setSearching(false); setQuery(''); return true; }
       if (filtersOpen) { setFiltersOpen(false); return true; }
-      if (boardId != null) { setBoardId(null); return true; }
+      if (boardView != null) { setBoardView(null); return true; }
       if (tab !== 'feed') { setTab('feed'); return true; }
       return false;
     });
     return () => sub.remove();
-  }, [saveState, searching, boardId, filtersOpen, setBoardId, tab, finishShare]);
+  }, [saveState, searching, boardView, filtersOpen, tab, finishShare]);
 
-  const openAdd = async () => {
-    let clip = '';
-    try { clip = extractUrl(await Clipboard.getStringAsync()) || ''; } catch {}
-    setAdding(clip);
-  };
   const addLink = async (input: NewPost): Promise<db.Post> => {
     const r = await saveShared(input.url, null, null, { note: input.note || null, boardId: input.boardId });
     if (r.status === 'no-url') throw new Error(t('Это не похоже на ссылку'));
     if (r.status === 'duplicate') throw new Error(t('Уже сохранено'));
     const post = await db.getPost(r.id);
     if (!post) throw new Error(t('Не удалось сохранить. Попробуй ещё раз.'));
-    setTab('feed'); setBoardId(null); setQuery(''); setFilter(DEFAULT_FILTER);
     processQueue(r.id).then(rescheduleReminder).catch(() => {});
     ensurePermission().catch(() => {});
     return post;
@@ -291,14 +293,35 @@ function Main() {
   };
 
   const openPost = useCallback((p: db.Post) => setDetailId(p.id), []);
-  const visiblePosts = React.useMemo(() => (hidden.size ? posts.filter((p) => !hidden.has(p.id)) : posts), [posts, hidden]);
-  const currentBoard = boards.find((b) => b.id === boardId);
+  const visiblePosts = React.useMemo(() => applyFilter(basePosts, filter, semActive).filter(p => !hidden.has(p.id)),
+    [basePosts, filter, semActive, hidden]);
+  const moveInboxPost = async (post: db.Post, board: number) => {
+    try {
+      await db.updatePost(post.id, { board_id: board, needs_resort: 0 });
+      setLibraryPosts(previous => previous.map(item => item.id === post.id ? { ...item, boardId: board, needsResort: false } : item));
+      haptic('confirm');
+      toast(t('Доска обновлена'));
+    } catch { toast(t('Не удалось переместить пост')); }
+  };
+  const displayedBoard = tab === 'boards' ? boardView : null;
+  const currentBoard = boards.find((b) => b.id === displayedBoard);
+  const inbox = postsInBoard(libraryPosts, 'inbox');
+  const boardPosts = displayedBoard == null ? [] : postsInBoard(libraryPosts, displayedBoard).filter((p) => !hidden.has(p.id));
+  const refreshFeed = async () => {
+    setRefreshing(true);
+    void processQueue().catch(() => {});
+    try { await reload(); } finally { setRefreshing(false); }
+  };
 
   return (
     <View style={[styles.root, { paddingTop: insets.top, backgroundColor: c.bg }]}>
       <View style={styles.header}>
-        <Image source={require('./assets/icon.png')} style={styles.brandIcon} />
-        <Text style={[styles.logo, { color: c.text }]} numberOfLines={1}>{tab === 'boards' ? t('Доски') : currentBoard ? `${currentBoard.emoji ?? ''} ${currentBoard.name}`.trim() : 'Grabbit'}</Text>
+        {displayedBoard != null ? <IconBtn name="chevron-back" onPress={() => setBoardView(null)} label={t('Назад к доскам')} /> :
+          <Image source={require('./assets/icon.png')} style={styles.brandIcon} />}
+        <Text style={[styles.logo, { color: c.text }]} numberOfLines={1}>
+          {tab === 'feed' ? 'Grabbit' : displayedBoard === 'inbox' ? t('Входящие') :
+            currentBoard ? [currentBoard.emoji, currentBoard.name].filter(Boolean).join(' ') : t('Доски')}
+        </Text>
         <IconBtn name="settings-outline" onPress={() => setSettingsOpen(true)} label={t('Настройки')} />
       </View>
       {tab === 'feed' && <View style={styles.searchWrap}><View style={[styles.search, { backgroundColor: c.card }]}>
@@ -315,17 +338,33 @@ function Main() {
           <FeedScreen posts={visiblePosts} query={debQuery} semantic={semActive}
             filter={filter} onOpenFilters={() => setFiltersOpen(true)} onLongPress={setMarkPost}
             onOpen={openPost} onSwipeDelete={swipeDelete}
-            extraHeader={currentBoard?.key === 'misc' && !debQuery ? <MiscSorter posts={visiblePosts} onDone={onResorted} /> : null}
-            onRefresh={async () => { setRefreshing(true); await retryAllNow(); await reload(); setRefreshing(false); }} refreshing={refreshing} />
+            onRefresh={refreshFeed} refreshing={refreshing} />
+        ) : displayedBoard != null ? (
+          <BoardFeed key={displayedBoard} posts={boardPosts} showOverview={displayedBoard !== 'inbox' && currentBoard?.key !== 'misc'} onLongPress={setMarkPost}
+            action={displayedBoard === 'inbox' || currentBoard?.key === 'misc' ? { label: t('Выбрать доску'), icon: 'folder-open-outline', onPress: setInboxPicker } : undefined}
+            onOpen={openPost} onSwipeDelete={swipeDelete} onRefresh={refreshFeed} refreshing={refreshing}
+            extraHeader={currentBoard?.key === 'misc' ? <MiscSorter posts={boardPosts} onSort={resortMisc} onDone={onResorted} /> : null} />
         ) : (
-          <BoardsScreen boards={boards} unsortedCount={unsorted} onOpenBoard={(id) => { setBoardId(id); setTab('feed'); }} />
+          <BoardsScreen boards={boards} unsortedCount={inbox.length} onOpenBoard={setBoardView} />
         )}
       <FilterSheet visible={filtersOpen} filter={filter} posts={basePosts} boards={boards}
-        onApply={(f) => { setFilter(f); setFiltersOpen(false); }} onClose={() => setFiltersOpen(false)} />
+        onApply={(f) => {
+          setFilter(f); setFiltersOpen(false);
+        }} onClose={() => setFiltersOpen(false)} />
       </View>
 
-      <BottomNav tab={tab} onChange={setTab} onAdd={openAdd} bottomInset={insets.bottom} />
+      <BottomNav tab={tab} onChange={(next) => { setBoardView(null); setTab(next); }} onAdd={() => setAdding(true)} bottomInset={insets.bottom} />
 
+      <InboxBoardPicker post={inboxPicker} boards={boards} onClose={() => setInboxPicker(null)}
+        onPick={(post, board) => { void moveInboxPost(post, board.id); }} onCreate={setNewInboxBoard} />
+      <PromptModal visible={newInboxBoard != null} title={t('Новая доска')} placeholder={t('Название')}
+        onCancel={() => setNewInboxBoard(null)} onOk={async (name) => {
+          if (!newInboxBoard) return;
+          const post = newInboxBoard;
+          setNewInboxBoard(null);
+          try { await moveInboxPost(post, await db.getOrCreateBoard(name)); }
+          catch { toast(t('Не удалось переместить пост')); }
+        }} />
       <HiddenInstagramLoader enabled={st.igConnected} />
       <ActionSheet visible={!!markPost} title={markPost ? (markPost.aiTitle || markPost.title || markPost.url).slice(0, 60) : undefined} onClose={() => setMarkPost(null)} actions={[
         ...(['try', 'done', 'skip'] as const).map((m) => ({
@@ -338,10 +377,10 @@ function Main() {
       <DetailScreen postId={detailId} boards={boards} onClose={() => setDetailId(null)} onOpenPost={setDetailId} toast={toast} onConnectInstagram={() => { void requestInstagram('login'); }} />
       <SettingsScreen visible={settingsOpen} onClose={() => setSettingsOpen(false)} boards={boards} pendingCount={pending} toast={toast} onInstagram={(m) => { void requestInstagram(m); }} initialUpdate={updateInfo} />
       <InstagramLoginModal visible={igMode != null} mode={igMode ?? 'login'} onClose={() => setIgMode(null)} onResult={onIgResult} />
-      {adding != null && <AddPostPanel boards={boards} posts={posts} initialUrl={adding} onClose={() => setAdding(null)} onSave={addLink}
-        onOpen={post => { setAdding(null); setDetailId(post.id); }} />}
+      {adding && <AddPostPanel boards={boards} posts={libraryPosts} initialBoardId={currentBoard?.id} onClose={() => setAdding(false)} onSave={addLink}
+        onOpen={post => { setAdding(false); setDetailId(post.id); }} />}
       <SaveOverlay state={saveState} delaySec={st.returnDelay} onDone={finishShare}
-        onOpen={(id) => { fromShare.current = false; setSaveState(null); setTab('feed'); setDetailId(id); }} />
+        onOpen={(id) => { fromShare.current = false; setSaveState(null); setBoardView(null); setTab('feed'); setDetailId(id); }} />
 
       {toastState && (
         <Animated.View pointerEvents="box-none" style={[styles.toast, { bottom: Math.max(insets.bottom, 8) + 130, backgroundColor: c.text, opacity: toastA, transform: [{ translateY: toastA.interpolate({ inputRange: [0, 1], outputRange: [10, 0] }) }] }]}>
@@ -377,7 +416,7 @@ function reuseUnchanged(prev: db.Post[], next: db.Post[]): db.Post[] {
   let same = prev.length === next.length;
   const out = next.map((n, i) => {
     const o = old.get(n.id);
-    const keep = o && (Object.keys(n) as (keyof db.Post)[]).every((k) => k === 'tags' ? o.tags.join('\u0001') === n.tags.join('\u0001') : o[k] === n[k]);
+    const keep = o && (Object.keys(n) as (keyof db.Post)[]).every((k) => k === 'summarySources' ? o.summarySources?.join() === n.summarySources?.join() : k === 'tags' ? o.tags.join('\u0001') === n.tags.join('\u0001') : o[k] === n[k]);
     const r = keep ? o! : n;
     if (r !== prev[i]) same = false;
     return r;

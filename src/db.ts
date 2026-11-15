@@ -1,3 +1,4 @@
+import { readSummarySources, type DetailSource, type SummarySource } from './core/analysisSources';
 import { DEFAULT_BOARDS, boardDisplayName, defaultBoardKey, findBoardByName, miscName, type BoardLang } from './core/boards';
 import type { AiBoard, BoardChoice } from './core/sorting';
 import { getUiLang as getLang } from './core/uiLang';
@@ -32,6 +33,9 @@ export interface Post {
   note: string | null;
   aiTitle: string | null;
   summary: string | null;
+  summarySources?: SummarySource[];
+  detailedSummary?: string | null;
+  detailSource?: DetailSource | null;
   tags: string[];
   boardId: number | null;
   status: PostStatus;
@@ -109,6 +113,10 @@ export function getDb(): Promise<SQLite.SQLiteDatabase> {
       }
       if (!cols.includes('shot')) await db.execAsync('ALTER TABLE posts ADD COLUMN shot INTEGER NOT NULL DEFAULT 0');
       // v6 (1.10.0): translations for the user's/AI boards, re-sort flag for closed posts parked in Misc
+      for (const field of ['summary_sources', 'detailed_summary', 'detail_source']) {
+        if (!cols.includes(field)) await db.execAsync('ALTER TABLE posts ADD COLUMN ' + field + ' TEXT');
+      }
+      if (!cols.includes('misc_checked_at')) await db.execAsync('ALTER TABLE posts ADD COLUMN misc_checked_at INTEGER');
       if (!cols.includes('needs_resort')) await db.execAsync('ALTER TABLE posts ADD COLUMN needs_resort INTEGER NOT NULL DEFAULT 0');
       for (const c of ['name_ru', 'name_en', 'name_uk']) if (!bcols.includes(c)) await db.execAsync(`ALTER TABLE boards ADD COLUMN ${c} TEXT`);
       // tr_done: 0 = translate once by AI, 1 = has translations or is the user's own name (never touch)
@@ -156,12 +164,16 @@ const showName = (r: any, lang: BoardLang = getLang()) => boardDisplayName(r.nam
 
 function rowToPost(r: any): Post {
   let tags: string[] = [];
+  let sources: SummarySource[] | undefined;
+  try { sources = readSummarySources(JSON.parse(r.summary_sources || 'null')); } catch {}
   try { tags = JSON.parse(r.tags || '[]'); } catch {}
   return {
     id: r.id, url: r.url, rawText: r.raw_text, platform: r.platform,
     title: r.title, description: r.description, author: r.author, image: r.image, localImage: r.local_image,
     metaFetched: !!r.meta_fetched, shot: !!r.shot, needsResort: !!r.needs_resort, metaBlocked: !!r.meta_blocked, unavailable: !!r.unavailable, note: r.note ?? null,
     aiTitle: r.ai_title, summary: r.summary, tags, boardId: r.board_id,
+    summarySources: sources ?? undefined, detailedSummary: r.detailed_summary ?? null,
+    detailSource: r.detail_source === 'article' || r.detail_source === 'transcript' ? r.detail_source : null,
     status: r.status, attempts: r.attempts, nextTryAt: r.next_try_at, lastError: r.last_error,
     createdAt: r.created_at, openedAt: r.opened_at, remindedAt: r.reminded_at,
     mark: r.mark === 'try' || r.mark === 'done' || r.mark === 'skip' ? r.mark : null,
@@ -227,13 +239,26 @@ export async function setMark(id: number, mark: PostMark | null) {
   await updatePost(id, { mark });
 }
 
-export async function updatePost(id: number, fields: Partial<Record<string, any>>) {
+export async function updatePost(
+  id: number,
+  fields: Partial<Record<string, any>>,
+  autoBoard?: { from: number | null; to: number | null; needsResort: boolean },
+  guard?: { boardId: number | null; ready?: boolean },
+) {
   const db = await getDb();
   const keys = Object.keys(fields);
-  if (!keys.length) return;
-  const sql = `UPDATE posts SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`;
-  await db.runAsync(sql, ...keys.map((k) => (k === 'tags' ? JSON.stringify(fields[k]) : fields[k])), id);
-  emitDataChanged();
+  const assignments = keys.map((key) => `${key} = ?`);
+  const values = keys.map((key) => key === 'tags' || key === 'summary_sources' ? JSON.stringify(fields[key]) : fields[key]);
+  if (autoBoard) {
+    assignments.push('board_id = CASE WHEN board_id IS ? THEN ? ELSE board_id END',
+      'needs_resort = CASE WHEN board_id IS ? THEN ? ELSE needs_resort END');
+    values.push(autoBoard.from, autoBoard.to, autoBoard.from, Number(autoBoard.needsResort));
+  }
+  if (!assignments.length) return false;
+  const where = guard ? "id = ? AND board_id IS ?" + (guard.ready ? " AND status != 'pending'" : '') : 'id = ?';
+  const result = await db.runAsync(`UPDATE posts SET ${assignments.join(', ')} WHERE ${where}`, ...values, id, ...(guard ? [guard.boardId] : []));
+  if (result.changes) emitDataChanged();
+  return result.changes > 0;
 }
 
 export async function deletePost(id: number) {
@@ -401,11 +426,19 @@ export async function setSetting(key: string, value: string | null) {
   else await db.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', key, value);
 }
 
-export async function pendingPosts(now = Date.now()): Promise<Post[]> {
+export async function nextPendingPost(now = Date.now(), id?: number): Promise<Post | null> {
   const db = await getDb();
-  const rows = await db.getAllAsync("SELECT * FROM posts WHERE status = 'pending' AND next_try_at <= ? ORDER BY created_at ASC LIMIT 20", now);
-  return rows.map(rowToPost);
+  const row = id === undefined
+    ? await db.getFirstAsync("SELECT * FROM posts WHERE status = 'pending' AND next_try_at <= ? ORDER BY created_at, id LIMIT 1", now)
+    : await db.getFirstAsync("SELECT * FROM posts WHERE status = 'pending' AND next_try_at <= ? AND id = ?", now, id);
+  return row ? rowToPost(row) : null;
 }
+
+export async function boardExists(id: number): Promise<boolean> {
+  const db = await getDb();
+  return !!(await db.getFirstAsync('SELECT id FROM boards WHERE id = ?', id));
+}
+
 export async function countPending(): Promise<number> {
   const db = await getDb();
   const r = await db.getFirstAsync<{ n: number }>("SELECT COUNT(*) AS n FROM posts WHERE status != 'done'");
@@ -447,10 +480,10 @@ export async function clearEmbedding(id: number) {
   await db.runAsync('UPDATE posts SET embedding = NULL, embed_model = NULL WHERE id = ?', id);
 }
 
-/** Done posts in the Misc board (for «Разобрать Misc»), oldest first. */
+/** Retry ready posts in Misc, giving items not checked yet priority. */
 export async function miscPosts(): Promise<Post[]> {
   const db = await getDb();
-  const rows = await db.getAllAsync("SELECT p.* FROM posts p JOIN boards b ON b.id = p.board_id WHERE b.key = 'misc' AND p.status = 'done' ORDER BY p.created_at ASC");
+  const rows = await db.getAllAsync("SELECT p.* FROM posts p JOIN boards b ON b.id = p.board_id WHERE b.key = 'misc' AND p.status != 'pending' ORDER BY p.misc_checked_at ASC NULLS FIRST, p.created_at ASC");
   return rows.map(rowToPost);
 }
 

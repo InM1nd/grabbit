@@ -2,6 +2,7 @@ import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import * as db from './db';
 import { getSettings, loadSettings, updateSettings } from './settings';
+import { isRediscoveryReminder, postReminderId, REDISCOVERY_ID } from './core/reminderTime';
 import { daysPhrase, t } from './i18n';
 
 const DAY = 86_400_000;
@@ -54,7 +55,14 @@ function plural(n: number, one: string, few: string, many: string) {
  * Keeps exactly one local notification scheduled: about the oldest save that is
  * 7+ days old and was never opened. Called on app start / background / data changes.
  */
-export async function rescheduleReminder() {
+let rediscovery: Promise<void> = Promise.resolve();
+
+export function rescheduleReminder(): Promise<void> {
+  rediscovery = rediscovery.then(updateRediscoveryReminder);
+  return rediscovery;
+}
+
+async function updateRediscoveryReminder() {
   try {
     const now = Date.now();
     // book-keeping: the previously scheduled reminder has fired already
@@ -66,7 +74,8 @@ export async function rescheduleReminder() {
       await db.setSetting('rem_post', null);
       await db.setSetting('rem_at', null);
     }
-    await Notifications.cancelAllScheduledNotificationsAsync();
+    const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+    await Promise.all(scheduled.filter(isRediscoveryReminder).map((reminder) => Notifications.cancelScheduledNotificationAsync(reminder.identifier)));
     const st = await loadSettings().then(() => getSettings());
     if (!st.remOn) return;
     const AGE_MS = st.remAgeDays * DAY;
@@ -75,7 +84,8 @@ export async function rescheduleReminder() {
     if (!perm.granted) return;
 
     const lastFired = Number(await db.getSetting('rem_last_fired')) || 0;
-    const candidates = (await db.unopenedPosts()).filter((p) => !p.remindedAt || now - p.remindedAt > REPEAT_AFTER_MS);
+    const explicitIds = new Set(scheduled.filter((reminder) => reminder.content.data?.reminderKind === 'post').map((reminder) => reminder.content.data?.postId));
+    const candidates = (await db.unopenedPosts()).filter((p) => !explicitIds.has(p.id) && (!p.remindedAt || now - p.remindedAt > REPEAT_AFTER_MS));
     if (!candidates.length) return;
     // oldest first; the post becomes eligible once it is AGE_MS old
     const post = candidates[0];
@@ -84,10 +94,11 @@ export async function rescheduleReminder() {
     const days = Math.max(st.remAgeDays, Math.round((at - post.createdAt) / DAY));
     const title = post.aiTitle || post.title || post.url;
     await Notifications.scheduleNotificationAsync({
+      identifier: REDISCOVERY_ID,
       content: {
         title: t('Ты сохранил это {d} назад 👀', { d: daysPhrase(days) }),
         body: `${title}${post.summary ? ' — ' + post.summary.slice(0, 120) : ''}`,
-        data: { postId: post.id },
+        data: { postId: post.id, reminderKind: 'rediscovery' },
       },
       trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: new Date(at), channelId: 'reminders' },
     });
@@ -96,4 +107,38 @@ export async function rescheduleReminder() {
   } catch (e) {
     console.warn('reminder', e);
   }
+}
+
+export async function getPostReminder(id: number): Promise<number | null> {
+  const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+  const at = scheduled.find((request) => request.identifier === postReminderId(id))?.content.data?.remindAt;
+  return typeof at === 'number' && at > Date.now() ? at : null;
+}
+
+export async function schedulePostReminder(post: db.Post, at: number): Promise<boolean> {
+  await setupNotifications();
+  let permission = await Notifications.getPermissionsAsync();
+  if (!permission.granted && permission.canAskAgain) permission = await Notifications.requestPermissionsAsync();
+  if (!permission.granted) return false;
+  if (at <= Date.now() || !await db.getPost(post.id)) throw new Error('Invalid post reminder');
+
+  await Notifications.scheduleNotificationAsync({
+    identifier: postReminderId(post.id),
+    content: {
+      title: t('Напоминание Grabbit'),
+      body: post.aiTitle || post.title || post.url,
+      data: { postId: post.id, reminderKind: 'post', remindAt: at },
+    },
+    trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: new Date(at), channelId: 'reminders' },
+  });
+  if (!await db.getPost(post.id)) {
+    await cancelPostReminder(post.id);
+    throw new Error('Post was deleted');
+  }
+  void rescheduleReminder();
+  return true;
+}
+
+export async function cancelPostReminder(id: number): Promise<void> {
+  await Notifications.cancelScheduledNotificationAsync(postReminderId(id));
 }

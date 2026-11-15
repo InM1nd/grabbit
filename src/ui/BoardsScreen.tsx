@@ -7,8 +7,10 @@ import * as db from '../db';
 import { useColors } from '../theme';
 import { ActionSheet, PromptModal } from './common';
 import { t } from '../i18n';
+import type { BoardView } from '../core/boardView';
+import { BoardInbox } from './BoardInbox';
 
-interface Props { boards: db.Board[]; unsortedCount: number; onOpenBoard: (id: number | null) => void }
+interface Props { boards: db.Board[]; unsortedCount: number; onOpenBoard: (id: BoardView) => void }
 
 export function BoardsScreen({ boards, unsortedCount, onOpenBoard }: Props) {
   const dialog = useDialog();
@@ -21,6 +23,7 @@ export function BoardsScreen({ boards, unsortedCount, onOpenBoard }: Props) {
 
   return (
     <ScrollView contentContainerStyle={{ paddingHorizontal: 14, paddingTop: 4, paddingBottom: 120 }}>
+      <BoardInbox count={unsortedCount} onPress={() => onOpenBoard('inbox')} />
       <View style={styles.grid}>
         {boards.map((b) => (
           <Pressable key={b.id} onPress={() => onOpenBoard(b.id)} onLongPress={() => setMenu(b)} style={({ pressed }) => ({ width: w, opacity: pressed ? 0.8 : 1 })}>
@@ -34,7 +37,6 @@ export function BoardsScreen({ boards, unsortedCount, onOpenBoard }: Props) {
           <Text style={{ color: c.faint, marginTop: 4 }}>{t('Новая доска')}</Text>
         </Pressable>
       </View>
-      {unsortedCount > 0 && <Text style={[styles.note, { color: c.faint }]}>{t('Без доски: {n}', { n: unsortedCount })}</Text>}
       <Text style={[styles.note, { color: c.faint }]}>{t('Долгое нажатие — переименовать или удалить')}</Text>
 
       <ActionSheet

@@ -7,22 +7,30 @@ const BROWSER_UA =
 const BOT_UA = 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)';
 const TG_UA = 'TelegramBot (like TwitterBot)';
 
-async function fetchWithTimeout(url: string, init: RequestInit = {}, ms = 9000): Promise<Response> {
+async function readWithTimeout<T>(url: string, init: RequestInit, read: (response: Response) => T | Promise<T>): Promise<T> {
   const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), ms);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      ctrl.abort();
+      reject(new Error('metadata-timeout'));
+    }, 9000);
+  });
   try {
-    return await fetch(url, { redirect: 'follow', ...init, signal: ctrl.signal });
+    return await Promise.race([fetch(url, { redirect: 'follow', ...init, signal: ctrl.signal }).then(read), timeout]);
   } finally {
-    clearTimeout(t);
+    clearTimeout(timer);
   }
+}
+
+function resolveRedirect(url: string): Promise<string> {
+  return readWithTimeout(url, { headers: { 'User-Agent': BROWSER_UA } }, (response) => response.url || url);
 }
 
 async function getJson(url: string, headers: Record<string, string> = {}): Promise<any | null> {
   try {
-    const r = await fetchWithTimeout(url, { headers: { 'User-Agent': BROWSER_UA, Accept: 'application/json', ...headers } });
-    if (!r.ok) return null;
-    const txt = await r.text();
-    return JSON.parse(txt);
+    return await readWithTimeout(url, { headers: { 'User-Agent': BROWSER_UA, Accept: 'application/json', ...headers } },
+      (response) => response.ok ? response.json() : null);
   } catch {
     return null;
   }
@@ -71,21 +79,22 @@ function absolutize(img: string | undefined, base: string): string | undefined {
 
 async function fetchHtmlMeta(url: string, ua: string): Promise<{ meta: Record<string, string>; finalUrl: string } | null> {
   try {
-    const r = await fetchWithTimeout(url, {
+    return await readWithTimeout(url, {
       headers: { 'User-Agent': ua, Accept: 'text/html,application/xhtml+xml', 'Accept-Language': 'ru,en;q=0.8' },
+    }, async (response) => {
+      if (!response.ok) return null;
+      const ct = response.headers.get('content-type') || '';
+      if (ct && !/html|xml/i.test(ct)) return null;
+      const html = await response.text();
+      const meta = parseHtmlMeta(html);
+      const ld = parseJsonLd(html);
+      // expose JSON-LD as fallback keys so fromOg() can use them
+      if (ld.title) meta['ld:title'] = ld.title;
+      if (ld.description) meta['ld:description'] = ld.description;
+      if (ld.image) meta['ld:image'] = ld.image;
+      if (ld.author) meta['ld:author'] = ld.author;
+      return { meta, finalUrl: response.url || url };
     });
-    if (!r.ok) return null;
-    const ct = r.headers.get('content-type') || '';
-    if (ct && !/html|xml/i.test(ct)) return null;
-    const html = await r.text();
-    const meta = parseHtmlMeta(html);
-    const ld = parseJsonLd(html);
-    // expose JSON-LD as fallback keys so fromOg() can use them
-    if (ld.title) meta['ld:title'] = ld.title;
-    if (ld.description) meta['ld:description'] = ld.description;
-    if (ld.image) meta['ld:image'] = ld.image;
-    if (ld.author) meta['ld:author'] = ld.author;
-    return { meta, finalUrl: r.url || url };
   } catch {
     return null;
   }
@@ -150,7 +159,7 @@ async function tiktok(url: string): Promise<Partial<Metadata> | null> {
   let u = url;
   if (/\/\/(vm|vt)\.tiktok\.com\/|tiktok\.com\/t\//.test(u)) {
     // short share link → resolve the redirect to the full /@user/video/<id> url
-    try { u = (await fetchWithTimeout(u, { headers: { 'User-Agent': BROWSER_UA } })).url || u; } catch {}
+    try { u = await resolveRedirect(u); } catch {}
     u = u.split('?')[0];
   }
   const j = await getJson(`https://www.tiktok.com/oembed?url=${encodeURIComponent(u)}`);
@@ -161,7 +170,7 @@ async function tiktok(url: string): Promise<Partial<Metadata> | null> {
 async function xPost(url: string): Promise<Partial<Metadata> | null> {
   let finalUrl = url;
   if (/\/\/t\.co\//.test(url)) {
-    try { finalUrl = (await fetchWithTimeout(url, { headers: { 'User-Agent': BROWSER_UA } })).url || url; } catch {}
+    try { finalUrl = await resolveRedirect(url); } catch {}
   }
   const m = /\/(?:[^/]+)\/status(?:es)?\/(\d+)/.exec(finalUrl);
   if (m) {
@@ -195,7 +204,7 @@ async function xPost(url: string): Promise<Partial<Metadata> | null> {
 async function reddit(url: string): Promise<Partial<Metadata> | null> {
   let u = url;
   if (/redd\.it|\/s\//.test(u)) {
-    try { u = (await fetchWithTimeout(u, { headers: { 'User-Agent': BROWSER_UA } })).url || u; } catch {}
+    try { u = await resolveRedirect(u); } catch {}
   }
   const base = u.split('?')[0].replace(/\/$/, '');
   const j = await getJson(base + '.json?raw_json=1', { 'User-Agent': 'android:post-saver:1.0 (personal)' });
@@ -222,9 +231,9 @@ async function instagram(url: string): Promise<Partial<Metadata> | null> {
   const embed = igEmbedUrl(url);
   if (embed) {
     try {
-      const r = await fetchWithTimeout(embed, { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept-Language': 'ru,en;q=0.8' } });
-      if (r.ok) {
-        const html = await r.text();
+      const html = await readWithTimeout(embed, { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept-Language': 'ru,en;q=0.8' } },
+        (response) => response.ok ? response.text() : null);
+      if (html) {
         if (/EmbedBrokenMedia/.test(html)) res.unavailable = true;
         const cap = /<div class="Caption">([\s\S]*?)<div class="Footer"/.exec(html) || /<div class="Caption">([\s\S]*?)<\/div>/.exec(html);
         if (cap) {
@@ -256,8 +265,8 @@ async function instagram(url: string): Promise<Partial<Metadata> | null> {
   return res.unavailable ? { unavailable: true } : null;
 }
 
-async function generic(url: string): Promise<Partial<Metadata> | null> {
-  for (const ua of [BROWSER_UA, BOT_UA]) {
+async function generic(url: string, agents: string[]): Promise<Partial<Metadata> | null> {
+  for (const ua of agents) {
     const page = await fetchHtmlMeta(url, ua);
     if (page) {
       const og = fromOg(page.meta, page.finalUrl);
@@ -280,7 +289,8 @@ export async function fetchMetadata(url: string): Promise<Metadata> {
   const tries: [string, (u: string) => Promise<Partial<Metadata> | null>][] = [];
   const s = STRATEGIES[platform];
   if (s) tries.push([platform, s]);
-  tries.push(['og', generic]); // generic OpenGraph as last resort
+  // The Instagram strategy already checked the link-preview bot's OpenGraph response.
+  tries.push(['og', (u) => generic(u, s === instagram ? [BROWSER_UA] : [BROWSER_UA, BOT_UA])]);
   let unavailable = false;
   for (const [name, fn] of tries) {
     try {
@@ -294,4 +304,24 @@ export async function fetchMetadata(url: string): Promise<Metadata> {
     }
   }
   return { url, platform, blocked: true, unavailable: unavailable || undefined, source: 'none' };
+}
+
+export function extractArticleText(html: string): string | null {
+  const content = /<article\b[^>]*>([\s\S]*?)<\/article>/i.exec(html)?.[1] ??
+    /<main\b[^>]*>([\s\S]*?)<\/main>/i.exec(html)?.[1];
+  if (!content) return null;
+  const body = content.replace(/<(script|style|nav|aside|footer)\b[^>]*>[\s\S]*?<\/\1>/gi, '');
+  const blocks = Array.from(body.matchAll(/<(p|li|h[1-4])\b[^>]*>([\s\S]*?)<\/\1>/gi),
+    match => clean(match[2], 3000)).filter(Boolean);
+  const text = blocks.join('\n').slice(0, 9500);
+  return text.length >= 180 ? text : null;
+}
+
+export async function fetchArticleText(url: string): Promise<string | null> {
+  try {
+    return await readWithTimeout(url, { headers: { 'User-Agent': BROWSER_UA, Accept: 'text/html' } }, async (response) => {
+      if (!response.ok || !/html|xml/i.test(response.headers.get('content-type') ?? '')) return null;
+      return extractArticleText((await response.text()).slice(0, 700_000));
+    });
+  } catch { return null; }
 }

@@ -3,6 +3,7 @@ import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import * as db from './db';
 import { emitDataChanged } from './events';
+import { readSummarySources, type DetailSource, type SummarySource } from './core/analysisSources';
 import { t } from './i18n';
 
 export interface BackupFile {
@@ -13,6 +14,7 @@ export interface BackupFile {
   posts: {
     url: string; platform: string; title: string | null; description: string | null; author: string | null; image: string | null;
     aiTitle: string | null; summary: string | null; tags: string[]; note: string | null; board: string | null;
+    summarySources?: SummarySource[]; detailedSummary?: string | null; detailSource?: DetailSource | null;
     createdAt: number; openedAt: number | null; rawText: string | null;
   }[];
 }
@@ -27,6 +29,7 @@ export async function buildBackup(): Promise<BackupFile> {
     posts: posts.map((p) => ({
       url: p.url, platform: p.platform, title: p.title, description: p.description, author: p.author, image: p.image,
       aiTitle: p.aiTitle, summary: p.summary, tags: p.tags, note: p.note, board: p.boardId ? byId.get(p.boardId) ?? null : null,
+      summarySources: p.summarySources, detailedSummary: p.detailedSummary, detailSource: p.detailSource,
       createdAt: p.createdAt, openedAt: p.openedAt, rawText: p.rawText,
     })),
   };
@@ -70,11 +73,13 @@ export async function importBackup(): Promise<{ added: number; skipped: number }
     if (p.board) boardId = boardIds.get(p.board.toLowerCase()) ?? (await db.getOrCreateBoard(p.board));
     const done = !!p.summary;
     await d.runAsync(
-      `INSERT INTO posts (url, raw_text, platform, title, description, author, image, meta_fetched, ai_title, summary, tags, note, board_id, status, created_at, opened_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO posts (url, raw_text, platform, title, description, author, image, meta_fetched, ai_title, summary, tags, note, board_id, status, created_at, opened_at, summary_sources, detailed_summary, detail_source)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       p.url, p.rawText ?? null, p.platform || 'web', p.title ?? null, p.description ?? null, p.author ?? null, p.image ?? null,
       p.aiTitle ?? null, p.summary ?? null, JSON.stringify(p.tags || []), p.note ?? null, boardId, done ? 'done' : 'pending',
-      p.createdAt || Date.now(), p.openedAt ?? null,
+      p.createdAt || Date.now(), p.openedAt ?? null, JSON.stringify(readSummarySources(p.summarySources) ?? null),
+      typeof p.detailedSummary === 'string' ? p.detailedSummary : null,
+      p.detailSource === 'article' || p.detailSource === 'transcript' ? p.detailSource : null,
     );
     added++;
   }

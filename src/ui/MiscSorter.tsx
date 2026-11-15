@@ -2,17 +2,19 @@ import React, { useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import type { Post } from '../db';
-import { resortMisc, type ResortProgress, type ResortResult } from '../processor';
+import type { ResortProgress, ResortResult } from '../processor';
 import { useColors } from '../theme';
 import { t } from '../i18n';
 
 /** In-feed card on the Misc board: «Разобрать Misc» with inline progress (no system dialogs). */
-export function MiscSorter({ posts, onDone }: { posts: Post[]; onDone: (msg: string, r?: ResortResult) => void }) {
+export function MiscSorter({ posts, onSort, onDone }: {
+  posts: Post[]; onSort: (onProgress: (p: ResortProgress) => void) => Promise<ResortResult>; onDone: (msg: string, r?: ResortResult) => void;
+}) {
   const c = useColors();
   const [prog, setProg] = useState<ResortProgress | null>(null);
   const running = useRef(false);
   const waiting = posts.filter((p) => p.needsResort).length;
-  const sortable = posts.filter((p) => !p.needsResort && p.status === 'done').length;
+  const sortable = posts.filter(p => p.status !== 'pending').length;
   if (!posts.length) return null;
 
   const run = async () => {
@@ -20,12 +22,14 @@ export function MiscSorter({ posts, onDone }: { posts: Post[]; onDone: (msg: str
     running.current = true;
     setProg({ done: 0, total: sortable, moved: 0 });
     let r: ResortResult | null = null;
-    try { r = await resortMisc(setProg); } catch { /* reported below */ }
+    try { r = await onSort(setProg); } catch { /* reported below */ }
     running.current = false;
     setProg(null);
     if (!r) return onDone(t('Не удалось разобрать — попробуй позже'));
     const parts = [r.moved ? t('Разложил по доскам: {n}', { n: r.moved }) : t('Новых мест не нашлось')];
-    if (r.limited) parts.push(t('лимит ИИ на сегодня — продолжу завтра'));
+    if (r.noAi) return onDone(t('Нет ключа Gemini в сборке'));
+    if (r.waiting) parts.push(t('Недостаточно данных: {n}', { n: r.waiting }));
+    if (r.limited) parts.push(t('Достигнут лимит ИИ'));
     else if (r.left) parts.push(t('ещё {n} — нажми снова', { n: r.left }));
     onDone(parts.join(' · '), r);
   };
@@ -41,14 +45,14 @@ export function MiscSorter({ posts, onDone }: { posts: Post[]; onDone: (msg: str
             {prog
               ? t('Проверено {done} из {total} · перенесено {moved}', { done: prog.done, total: prog.total, moved: prog.moved })
               : sortable
-                ? t('ИИ попробует разложить посты по подходящим доскам')
-                : t('Здесь только закрытые посты')}
+                ? t('Перечитать слабые посты и разложить по доскам')
+                : t('Посты ещё обрабатываются')}
           </Text>
         </View>
         {prog ? <ActivityIndicator color={c.accent} /> : sortable > 0 && (
-          <Pressable onPress={run} accessibilityRole="button" accessibilityLabel={t('Разобрать Misc')}
+          <Pressable onPress={run} accessibilityRole="button" accessibilityLabel={t('Распределить по доскам')}
             style={({ pressed }) => [styles.btn, { backgroundColor: c.chipActive, opacity: pressed ? 0.8 : 1 }]}>
-            <Text style={[styles.btnText, { color: c.onChipActive }]}>{t('Разобрать')}</Text>
+            <Text style={[styles.btnText, { color: c.onChipActive }]}>{t('Распределить')}</Text>
           </Pressable>
         )}
       </View>
