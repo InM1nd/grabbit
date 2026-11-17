@@ -23,13 +23,13 @@ const COMMON: Partial<React.ComponentProps<typeof WebView>> = {
 export function HiddenInstagramLoader({ enabled }: { enabled: boolean }) {
   const [src, setSrc] = useState<string | null>(null);
   const pending = useRef<{ url: string; resolve: (r: IgRawPage) => void } | null>(null);
-  const key = useRef(0);
+  const [key, setKey] = useState(0);
 
   useEffect(() => {
     if (!enabled) { registerIgLoader(null); return; }
     registerIgLoader((url) => new Promise<IgRawPage>((resolve) => {
       pending.current = { url, resolve };
-      key.current++;
+      setKey((value) => value + 1);
       setSrc(url);
     }));
     return () => registerIgLoader(null);
@@ -49,7 +49,7 @@ export function HiddenInstagramLoader({ enabled }: { enabled: boolean }) {
   return (
     <View style={styles.hidden} pointerEvents="none">
       <WebView
-        key={key.current}
+        key={key}
         {...COMMON}
         source={{ uri: src }}
         injectedJavaScript={IG_INJECT_JS}
@@ -70,7 +70,12 @@ export function InstagramLoginModal({ visible, mode, onClose, onResult }: LoginP
   const [loading, setLoading] = useState(true);
   const done = useRef(false);
   const web = useRef<WebView>(null);
-  useEffect(() => { if (visible) { done.current = false; setLoading(true); } }, [visible]);
+  const [wasVisible, setWasVisible] = useState(visible);
+  if (wasVisible !== visible) {
+    setWasVisible(visible);
+    if (visible) setLoading(true);
+  }
+  useEffect(() => { if (visible) done.current = false; }, [visible]);
 
   const onMessage = (e: WebViewMessageEvent) => {
     try {

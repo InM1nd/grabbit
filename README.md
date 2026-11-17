@@ -17,6 +17,8 @@ See [docs/PRIVACY.md](docs/PRIVACY.md). There are no accounts, ads or analytics;
 
 ## Development
 Developer notes (in Russian) are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). Release history is in [RELEASE_NOTES.md](RELEASE_NOTES.md).
+JSON backup contents and restore behavior are documented in [docs/BACKUP.md](docs/BACKUP.md).
+Offline saving and queue recovery are documented in [docs/OFFLINE.md](docs/OFFLINE.md).
 
 ## License
 **All rights reserved.** The source code is published for reference only. You may not use, copy, modify, distribute it, or publish builds of it without prior written permission from the author. See [LICENSE](LICENSE).

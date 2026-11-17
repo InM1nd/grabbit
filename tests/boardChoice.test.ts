@@ -143,7 +143,10 @@ function score(kind: 'centroid' | 'name', centered: boolean) {
     assert.equal(prep.centered, centered);
     for (let i = 0; i < 120; i++, n++) {
       const p = pickBoard(w.onTopic(i), prep, centered ? undefined : EMBED_PICK);
-      if (p) (p.id === i % 6 ? right++ : wrong++);
+      if (p) {
+        if (p.id === i % 6) right++;
+        else wrong++;
+      }
       if (pickBoard(w.offTopic(i), prep, centered ? undefined : EMBED_PICK)) off++;
     }
   }

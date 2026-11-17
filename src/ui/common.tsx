@@ -40,7 +40,7 @@ const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 /** Pressable that sinks a little under the finger and springs back. */
 export function PressScale({ style, scaleTo = 0.95, onPressIn, onPressOut, ...rest }: Omit<PressableProps, 'style'> & { style?: StyleProp<ViewStyle>; scaleTo?: number }) {
-  const scale = useRef(new Animated.Value(1)).current;
+  const [scale] = useState(() => new Animated.Value(1));
   const reduce = useReduceMotion();
   const to = (v: number) => Animated.spring(scale, { toValue: v, useNativeDriver: true, isInteraction: false, speed: 40, bounciness: v === 1 ? 10 : 0 }).start();
   return <AnimatedPressable {...rest} style={[style, { transform: [{ scale }] }]}
@@ -50,7 +50,7 @@ export function PressScale({ style, scaleTo = 0.95, onPressIn, onPressOut, ...re
 
 /** Icon that pops (grows and settles) each time it becomes active. */
 export function PopIcon({ active, ...icon }: React.ComponentProps<typeof Ionicons> & { active: boolean }) {
-  const scale = useRef(new Animated.Value(1)).current;
+  const [scale] = useState(() => new Animated.Value(1));
   const reduce = useReduceMotion();
   const first = useRef(true);
   useEffect(() => {
@@ -58,15 +58,15 @@ export function PopIcon({ active, ...icon }: React.ComponentProps<typeof Ionicon
     if (!active || reduce) return;
     scale.setValue(0.6);
     Animated.spring(scale, { toValue: 1, useNativeDriver: true, isInteraction: false, speed: 14, bounciness: 16 }).start();
-  }, [active]);
+  }, [active, reduce, scale]);
   return <Animated.View style={{ transform: [{ scale }] }}><Ionicons {...icon} /></Animated.View>;
 }
 
 /** Fades and slides its content in once, when it mounts. */
 export function Appear({ children, style, delay = 0, dy = 8 }: { children: React.ReactNode; style?: StyleProp<ViewStyle>; delay?: number; dy?: number }) {
-  const p = useRef(new Animated.Value(0)).current;
+  const [p] = useState(() => new Animated.Value(0));
   const reduce = useReduceMotion();
-  useEffect(() => { Animated.timing(p, { toValue: 1, duration: reduce ? 0 : 220, delay: reduce ? 0 : delay, useNativeDriver: true, isInteraction: false }).start(); }, []);
+  useEffect(() => { Animated.timing(p, { toValue: 1, duration: reduce ? 0 : 220, delay: reduce ? 0 : delay, useNativeDriver: true, isInteraction: false }).start(); }, [p, reduce, delay]);
   return <Animated.View style={[style, { opacity: p, transform: [{ translateY: p.interpolate({ inputRange: [0, 1], outputRange: [dy, 0] }) }] }]}>{children}</Animated.View>;
 }
 
@@ -114,7 +114,11 @@ interface PromptProps {
 export function PromptModal({ visible, title, placeholder, initial = '', okLabel = t('Готово'), hint, multiline, onCancel, onOk }: PromptProps) {
   const c = useColors();
   const [v, setV] = useState(initial);
-  useEffect(() => { if (visible) setV(initial); }, [visible, initial]);
+  const [source, setSource] = useState({ visible, initial });
+  if (source.visible !== visible || source.initial !== initial) {
+    setSource({ visible, initial });
+    if (visible) setV(initial);
+  }
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel} statusBarTranslucent>
       <KeyboardAvoidingView behavior="padding" style={[styles.center, { backgroundColor: c.overlay }]}>

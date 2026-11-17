@@ -1,9 +1,10 @@
 // Semantic search / similar posts: Gemini text embeddings + cosine similarity.
 // gemini-embedding-001 verified live 2026-10-28 (batchEmbedContents, taskType, outputDimensionality).
 
+import { canUseGemini, geminiTarget, type GeminiAuth } from './gemini';
+
 export const EMBED_MODEL = 'gemini-embedding-001';
 export const EMBED_DIM = 256;
-import { canUseGemini, geminiTarget, type GeminiAuth } from './gemini';
 
 export type TaskType = 'RETRIEVAL_DOCUMENT' | 'RETRIEVAL_QUERY' | 'SEMANTIC_SIMILARITY';
 

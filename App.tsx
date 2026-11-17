@@ -140,7 +140,7 @@ function Main() {
     setupNotifications();
     processQueue().then(rescheduleReminder);
     cleanupUpdates();
-    setTimeout(() => {
+    const updateTimer = setTimeout(() => {
       autoCheck().then((info) => {
         if (!info) return;
         setUpdateInfo(info);
@@ -165,8 +165,8 @@ function Main() {
     };
     Notifications.getLastNotificationResponseAsync().then((r) => { openFromNotif(r); Notifications.clearLastNotificationResponseAsync().catch(() => {}); });
     const nsub = Notifications.addNotificationResponseReceivedListener(openFromNotif);
-    return () => { offNet(); sub.remove(); clearInterval(tick); nsub.remove(); };
-  }, []);
+    return () => { offNet(); sub.remove(); clearTimeout(updateTimer); clearInterval(tick); nsub.remove(); };
+  }, [showToast]);
 
   // ---------- incoming share ----------
   useEffect(() => {
@@ -202,7 +202,7 @@ function Main() {
         ensurePermission().catch(() => {});
       }
     })();
-  }, [hasShareIntent]);
+  }, [hasShareIntent, shareIntent, resetShareIntent, dialog]);
 
   const finishShare = useCallback(() => {
     setSaveState(null);
@@ -280,7 +280,7 @@ function Main() {
       await updateSettings({ igConnected: false, igUserId: null });
       toast(t('Вышел из Instagram'));
     } else setIgMode('logout');
-  }, [dialog]);
+  }, [dialog, toast]);
 
   const onIgResult = async (loggedIn: boolean, userId: string | null) => {
     const mode = igMode;

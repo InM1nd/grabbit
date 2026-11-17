@@ -34,7 +34,7 @@ export function SettingsScreen({ visible, onClose, boards, pendingCount, toast, 
   const [igLocked, setIgLocked] = useState(0);
   useEffect(() => { if (visible) countInstagramUnavailable().then(setIgLocked); }, [visible, s.igConnected]);
 
-  const [upd, setUpd] = useState<{ busy?: boolean; sub?: string; info?: UpdateInfo; newer?: boolean; notConfigured?: boolean; progress?: number | null }>({});
+  const [upd, setUpd] = useState<{ busy?: boolean; sub?: string; info?: UpdateInfo; newer?: boolean; notConfigured?: boolean; progress?: number | null }>(() => visible && initialUpdate ? { info: initialUpdate, newer: true, sub: t('Есть новая версия') } : {});
   const check = async () => {
     setUpd({ busy: true });
     try {
@@ -61,7 +61,11 @@ export function SettingsScreen({ visible, onClose, boards, pendingCount, toast, 
       ] });
     }
   };
-  useEffect(() => { if (visible && initialUpdate) setUpd({ info: initialUpdate, newer: true, sub: t('Есть новая версия') }); }, [visible, initialUpdate]);
+  const [updateSource, setUpdateSource] = useState({ visible, initialUpdate });
+  if (updateSource.visible !== visible || updateSource.initialUpdate !== initialUpdate) {
+    setUpdateSource({ visible, initialUpdate });
+    if (visible && initialUpdate) setUpd({ info: initialUpdate, newer: true, sub: t('Есть новая версия') });
+  }
 
   const set = async (patch: Partial<Settings>, reschedule = false) => {
     await updateSettings(patch);
@@ -157,11 +161,19 @@ export function SettingsScreen({ visible, onClose, boards, pendingCount, toast, 
           </Section>
 
           <Section title={t('Данные')}>
-            <Row label={t('Экспорт в JSON')} sub={t('Все посты, доски, теги и заметки')} onPress={async () => { try { const n = await exportBackup(); toast(t('Экспортировано: {n}', { n })); } catch (e: any) { toast(e?.message || t('Не вышло')); } }}>
+            <Row label={t('Экспорт в JSON')} sub={t('Посты, доски, заметки, отметки и напоминания')} onPress={async () => { try { const n = await exportBackup(); toast(t('Экспортировано: {n}', { n })); } catch (e: any) { toast(e?.message || t('Не вышло')); } }}>
               <Ionicons name="share-outline" size={18} color={c.faint} />
             </Row>
             <Row label={t('Импорт из JSON')} sub={t('Существующие ссылки не дублируются')} onPress={async () => {
-              try { const r = await importBackup(); if (r) { toast(t('Добавлено {a}, пропущено {s}', { a: r.added, s: r.skipped })); processQueue(); } } catch (e: any) { dialog.info({ title: t('Импорт'), message: e?.message || t('Не вышло'), danger: true }); }
+              try {
+                const r = await importBackup();
+                if (r) {
+                  const result = t('Добавлено {a}, пропущено {s}', { a: r.added, s: r.skipped });
+                  if (r.remindersFailed) dialog.info({ title: t('Импорт'), message: result + '\n' + t('Не восстановлено напоминаний: {n}. Задайте их заново в карточках постов и проверьте разрешение на уведомления.', { n: r.remindersFailed }) });
+                  else toast(result);
+                  processQueue();
+                }
+              } catch (e: any) { dialog.info({ title: t('Импорт'), message: e?.message || t('Не вышло'), danger: true }); }
             }}>
               <Ionicons name="download-outline" size={18} color={c.faint} />
             </Row>
@@ -208,7 +220,11 @@ export function SettingsScreen({ visible, onClose, boards, pendingCount, toast, 
 function KeyModal({ visible, has, onClose, onSave }: { visible: boolean; has: boolean; onClose: () => void; onSave: (k: string | null) => void }) {
   const c = useColors();
   const [v, setV] = useState('');
-  useEffect(() => { if (visible) setV(''); }, [visible]);
+  const [wasVisible, setWasVisible] = useState(visible);
+  if (wasVisible !== visible) {
+    setWasVisible(visible);
+    if (visible) setV('');
+  }
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
       <Pressable style={styles.keyBack} onPress={onClose}>

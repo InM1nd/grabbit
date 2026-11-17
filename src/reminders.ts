@@ -44,13 +44,6 @@ function eveningAtOrAfter(t: number, hour: number): number {
   return d.getTime();
 }
 
-function plural(n: number, one: string, few: string, many: string) {
-  const m10 = n % 10, m100 = n % 100;
-  if (m10 === 1 && m100 !== 11) return one;
-  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
-  return many;
-}
-
 /**
  * Keeps exactly one local notification scheduled: about the oldest save that is
  * 7+ days old and was never opened. Called on app start / background / data changes.
@@ -113,6 +106,20 @@ export async function getPostReminder(id: number): Promise<number | null> {
   const scheduled = await Notifications.getAllScheduledNotificationsAsync();
   const at = scheduled.find((request) => request.identifier === postReminderId(id))?.content.data?.remindAt;
   return typeof at === 'number' && at > Date.now() ? at : null;
+}
+
+/** Read the system queue once when exporting a collection. */
+export async function listPostReminders(): Promise<Map<number, number>> {
+  const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+  const reminders = new Map<number, number>();
+  const now = Date.now();
+  for (const request of scheduled) {
+    const { postId, remindAt, reminderKind } = request.content.data ?? {};
+    if (reminderKind === 'post' && typeof postId === 'number' && Number.isSafeInteger(postId)
+      && request.identifier === postReminderId(postId) && typeof remindAt === 'number'
+      && Number.isFinite(remindAt) && remindAt > now) reminders.set(postId, remindAt);
+  }
+  return reminders;
 }
 
 export async function schedulePostReminder(post: db.Post, at: number): Promise<boolean> {

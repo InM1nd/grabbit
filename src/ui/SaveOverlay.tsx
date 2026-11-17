@@ -1,5 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as db from '../db';
@@ -19,9 +19,9 @@ export function SaveOverlay({ state, delaySec, onDone, onOpen }: Props) {
   const insets = useSafeAreaInsets();
   const reduceMotion = useReduceMotion();
   const [details, setDetails] = useState<{ state: SaveState; label: string | null; status: db.PostStatus } | null>(null);
-  const y = useRef(new Animated.Value(120)).current;
+  const [y] = useState(() => new Animated.Value(120));
   const doneRef = useRef(onDone);
-  doneRef.current = onDone;
+  useLayoutEffect(() => { doneRef.current = onDone; }, [onDone]);
 
   useEffect(() => {
     if (!state) return;

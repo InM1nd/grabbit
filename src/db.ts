@@ -6,11 +6,11 @@ import * as SQLite from 'expo-sqlite';
 import type { Platform } from './core/types';
 import { emitDataChanged } from './events';
 import { EMBED_MODEL, unpackVec } from './core/embed';
+import { markAllowed, type MarkFilter, type PostMark } from './core/marks';
 
 export type PostStatus = 'pending' | 'done' | 'error';
 /** User's own mark: try it / done / not important. null = none. */
 export type { PostMark } from './core/marks';
-import type { PostMark } from './core/marks';
 export const MARKS: PostMark[] = ['try', 'done', 'skip'];
 
 export interface Post {
@@ -208,8 +208,6 @@ export async function getPost(id: number): Promise<Post | null> {
  * («Неважно» is hidden unless explicitly asked for).
  */
 export { markAllowed, type MarkFilter } from './core/marks';
-import type { MarkFilter } from './core/marks';
-import { markAllowed } from './core/marks';
 
 export async function listPosts(opts: { boardId?: number | null; query?: string; mark?: MarkFilter } = {}): Promise<Post[]> {
   const db = await getDb();

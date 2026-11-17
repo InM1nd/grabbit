@@ -1,6 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { Image } from 'expo-image';
-import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { Animated, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '../theme';
@@ -49,10 +49,11 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
 function Sheet({ state, onClose }: { state: State; onClose: (i: number | null) => void }) {
   const c = useColors();
   const insets = useSafeAreaInsets();
-  const y = useRef(new Animated.Value(300)).current;
-  const [shown, setShown] = useState<State>(null);
+  const [y] = useState(() => new Animated.Value(300));
+  const [shown, setShown] = useState<State>(state);
+  if (state && state !== shown) setShown(state);
   useEffect(() => {
-    if (state) { setShown(state); y.setValue(300); Animated.spring(y, { toValue: 0, useNativeDriver: true, isInteraction: false, bounciness: 3, speed: 18 }).start(); }
+    if (state) { y.setValue(300); Animated.spring(y, { toValue: 0, useNativeDriver: true, isInteraction: false, bounciness: 3, speed: 18 }).start(); }
   }, [state, y]);
   const s = state || shown;
   if (!s) return null;

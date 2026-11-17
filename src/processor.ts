@@ -57,8 +57,15 @@ export async function saveShared(text: string | null | undefined, webUrl?: strin
   const existing = await db.findPostByUrl(norm);
   if (existing) return { status: 'duplicate', id: existing.id };
   const extra = [subject && !subject.includes(url) ? subject : '', extraText(text, url)].filter(Boolean).join(' — ');
-  const id = await db.insertPost({ url: norm, rawText: extra || null, platform: detectPlatform(norm), note: initial?.note, boardId: initial?.boardId });
-  return { status: 'saved', id };
+  try {
+    const id = await db.insertPost({ url: norm, rawText: extra || null, platform: detectPlatform(norm), note: initial?.note, boardId: initial?.boardId });
+    return { status: 'saved', id };
+  } catch (error) {
+    // Another share can insert the same URL after our initial lookup.
+    const duplicate = await db.findPostByUrl(norm);
+    if (duplicate) return { status: 'duplicate', id: duplicate.id };
+    throw error;
+  }
 }
 
 function backoffMs(attempts: number) {
@@ -137,13 +144,15 @@ function metadataFields(meta: Metadata) {
 
 async function processOne(post: db.Post) {
   let p = post;
+  // Offline wake-ups do not consume the remote retry budget or finalize metadata.
+  const deferOffline = () => db.updatePost(p.id, { next_try_at: Date.now() + 60_000, last_error: t('Нет сети') });
+  if (!(await online())) { await deferOffline(); return; }
   let meta = savedMetadata(p);
   if (!p.metaFetched) {
     let m = await fetchMetadata(p.url);
-    // fetchMetadata never throws; if everything failed we may simply be offline → keep it for a retry,
-    // but don't block the AI step forever: after 3 tries accept "blocked".
-    if (m.blocked && p.attempts < 2 && !(await online())) {
-      await db.updatePost(p.id, { attempts: p.attempts + 1, next_try_at: Date.now() + backoffMs(p.attempts + 1), last_error: t('Нет сети') });
+    // Connectivity may disappear while fetching; blocked while online is a site-level result.
+    if (m.blocked && !(await online())) {
+      await deferOffline();
       return;
     }
     meta = { ...m, url: p.url };
@@ -211,6 +220,7 @@ async function processOne(post: db.Post) {
       return;
     }
     const retryable = e instanceof AiError ? e.retryable : true;
+    if (retryable && !(await online())) { await deferOffline(); return; }
     const attempts = p.attempts + 1;
     if (retryable && attempts < 12) {
       await db.updatePost(p.id, { attempts, next_try_at: Date.now() + backoffMs(attempts), last_error: String(e?.message || e).slice(0, 200) });
@@ -223,7 +233,7 @@ async function processOne(post: db.Post) {
 async function online(): Promise<boolean> {
   try {
     const s = await NetInfo.fetch();
-    return s.isConnected !== false;
+    return s.isConnected !== false && s.isInternetReachable !== false;
   } catch {
     return true;
   }

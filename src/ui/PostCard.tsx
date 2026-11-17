@@ -1,6 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { Image } from 'expo-image';
-import React, { memo, useRef } from 'react';
+import React, { memo, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { Post } from '../db';
 import { PLATFORM_COLOR, PLATFORM_ICON, useColors } from '../theme';
@@ -43,10 +43,12 @@ function PostCardImpl({ post, width, onPress, onSwipeDelete, onLongPress, action
   const title = cardTitle(post);
   const processing = postProcessingLabel(post);
   const status = processing && <Text style={[styles.processing, { color: post.status === 'error' ? c.warn : c.sub }]}>{processing}</Text>;
-  const x = useRef(new Animated.Value(0)).current;
+  const [x] = useState(() => new Animated.Value(0));
   const latest = useRef({ post, onSwipeDelete, width });
-  latest.current = { post, onSwipeDelete, width };
-  const pan = useRef(PanResponder.create({
+  useLayoutEffect(() => { latest.current = { post, onSwipeDelete, width }; }, [post, onSwipeDelete, width]);
+  // PanResponder stores callbacks; refs are read only when gesture events fire.
+  // eslint-disable-next-line react-hooks/refs
+  const pan = useMemo(() => PanResponder.create({
     onMoveShouldSetPanResponder: (_, g) => !!latest.current.onSwipeDelete && g.dx < -14 && Math.abs(g.dx) > Math.abs(g.dy) * 1.8,
     onPanResponderTerminationRequest: () => false,
     onPanResponderMove: (_, g) => x.setValue(Math.min(0, g.dx)),
@@ -56,7 +58,7 @@ function PostCardImpl({ post, width, onPress, onSwipeDelete, onLongPress, action
       } else Animated.spring(x, { toValue: 0, useNativeDriver: true, isInteraction: false }).start();
     },
     onPanResponderTerminate: () => Animated.spring(x, { toValue: 0, useNativeDriver: true, isInteraction: false }).start(),
-  })).current;
+  }), [x]);
   const fade = x.interpolate({ inputRange: [-Math.max(width, 1), 0], outputRange: [0.3, 1], extrapolate: 'clamp' });
   // Text-only cards have a see-through tint, so the trash only appears while swiping.
   const trashOpacity = x.interpolate({ inputRange: [-40, -8], outputRange: [1, 0], extrapolate: 'clamp' });

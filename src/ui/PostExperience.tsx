@@ -71,9 +71,9 @@ export function PostPanel({ post, boards, onUpdate, onDelete, onClose, onMenu, o
   const c = useColors();
   const [tagInput, setTagInput] = useState('');
   const [pickingBoard, setPickingBoard] = useState(false);
-  const chevron = useRef(new Animated.Value(0)).current;
+  const [chevron] = useState(() => new Animated.Value(0));
   const reduceMotion = useReduceMotion();
-  useEffect(() => { Animated.spring(chevron, { toValue: pickingBoard ? 1 : 0, useNativeDriver: true, isInteraction: false, speed: reduceMotion ? 100 : 20, bounciness: 6 }).start(); }, [pickingBoard]);
+  useEffect(() => { Animated.spring(chevron, { toValue: pickingBoard ? 1 : 0, useNativeDriver: true, isInteraction: false, speed: reduceMotion ? 100 : 20, bounciness: 6 }).start(); }, [pickingBoard, chevron, reduceMotion]);
   const [copyMessage, setCopyMessage] = useState('');
   const [showOriginal, setShowOriginal] = useState(false);
   const board = boards.find(b => b.id === post.boardId);

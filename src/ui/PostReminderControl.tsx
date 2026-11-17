@@ -1,5 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { parseReminderTime, reminderInputValue, reminderPreset } from '../core/reminderTime';
 import { getLang, t } from '../i18n';
@@ -39,7 +39,19 @@ export function PostReminderControl({ at, onSave, onCancel }: Props) {
     catch { setMessage(t('Не удалось изменить напоминание.')); }
     finally { busy.current = false; }
   };
-  const scheduled = at != null && at > Date.now() ? at : null;
+  const [expiredAt, setExpiredAt] = useState<number | null>(null);
+  useEffect(() => {
+    if (at == null) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const check = () => {
+      const remaining = at - Date.now();
+      if (remaining <= 0) setExpiredAt(at);
+      else timer = setTimeout(check, Math.min(remaining, 2_147_483_647));
+    };
+    timer = setTimeout(check, Math.max(0, Math.min(at - Date.now(), 2_147_483_647)));
+    return () => clearTimeout(timer);
+  }, [at]);
+  const scheduled = at != null && at !== expiredAt ? at : null;
   const display = scheduled == null ? t('Напомнить') :
     new Intl.DateTimeFormat(getLang(), { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(scheduled);
 

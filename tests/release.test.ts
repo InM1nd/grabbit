@@ -28,7 +28,7 @@ test('manifest + source selection', () => {
   assert.equal(pickSource({ updateToken: 'x', updateManifestUrl: 'https://m' }).kind, 'manifest');
 });
 
-test('public releases API without token (live; not-configured while the repo is private)', async () => {
+test('public releases API without token (live; not-configured while the repo is private)', { skip: process.env.UPDATE_LIVE_TESTS !== '1' }, async () => {
   try {
     const info = await fetchLatest({ kind: 'github-public', repo: 'InM1nd/grabbit' });
     assert.match(info.version, /^\d+\.\d+\.\d+$/); assert.equal(info.needsAuth, false); assert.match(info.apkName, /\.apk$/);

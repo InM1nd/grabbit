@@ -1,6 +1,5 @@
-import './src/sentry';
-import { registerRootComponent } from 'expo';
 import { wrapRoot } from './src/sentry';
+import { registerRootComponent } from 'expo';
 
 import App from './App';
 

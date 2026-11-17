@@ -49,3 +49,33 @@ test('a general wake-up during a targeted run still drains pending posts', async
   await Promise.all([targeted, full]);
   assert.deepEqual(seen, [3, 1, 2]);
 });
+
+test('a targeted processing failure does not prevent the rest of the queue from running', async () => {
+  const ids = [1, 2, 3];
+  const seen: number[] = [];
+  const run = createPostQueue(async (id) => {
+    const i = id === undefined ? 0 : ids.indexOf(id);
+    return i < 0 ? undefined : ids.splice(i, 1)[0];
+  }, async (id) => {
+    seen.push(id);
+    if (id === 1) throw new Error('failed post');
+  });
+  await assert.rejects(run(1), /failed post/);
+  await run();
+  assert.deepEqual(seen, [1, 2, 3]);
+});
+
+test('after a worker failure a later wake-up can restart and complete pending work', async () => {
+  const ids = [1, 2];
+  const seen: number[] = [];
+  let fail = true;
+  const run = createPostQueue(async () => ids[0], async (id) => {
+    seen.push(id);
+    if (fail) { fail = false; throw new Error('temporary failure'); }
+    ids.shift();
+  });
+  await assert.rejects(run(), /temporary failure/);
+  await run();
+  assert.deepEqual(seen, [1, 1, 2]);
+  assert.deepEqual(ids, []);
+});

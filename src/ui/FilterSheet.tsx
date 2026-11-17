@@ -1,5 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { AccessibilityInfo, Animated, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Board, Post } from '../db';
@@ -45,14 +45,18 @@ export function FilterSheet({ visible, filter, posts, boards, onApply, onClose }
   const insets = useSafeAreaInsets();
   const reduce = useReduceMotion();
   const [draft, setDraft] = useState(filter);
-  const y = useRef(new Animated.Value(600)).current;
+  const [y] = useState(() => new Animated.Value(600));
+  const [wasVisible, setWasVisible] = useState(visible);
+  if (wasVisible !== visible) {
+    setWasVisible(visible);
+    if (visible) setDraft(filter);
+  }
   useEffect(() => {
     if (!visible) return;
-    setDraft(filter);
     if (reduce) { y.setValue(0); return; }
     y.setValue(600);
     Animated.spring(y, { toValue: 0, useNativeDriver: true, isInteraction: false, bounciness: 3, speed: 18 }).start();
-  }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [visible, reduce, y]);
   const sources = useMemo(() => presentSources(posts), [posts]);
   const count = useMemo(() => applyFilter(posts, draft, true).length, [posts, draft]);
   const usedBoards = boards.filter((b) => b.count == null || b.count > 0 || draft.boards.includes(b.id));
